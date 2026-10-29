@@ -1,0 +1,34 @@
+[package]
+name = "imagoverto"
+version = "0.0.0"
+edition = "2024"
+# The floor of the imazen codecs (zenwebp, zenjxl, zenravif, zenavif-parse).
+rust-version = "1.93"
+description = "Converts still images between WebP, AVIF, JPEG XL, JPEG and PNG, in pure Rust."
+license = "AGPL-3.0-only"
+repository = "https://github.com/veripublica/imagoverto"
+homepage = "https://github.com/veripublica/imagoverto"
+readme = "README.md"
+keywords = ["image", "webp", "avif", "jpeg-xl", "converter"]
+categories = ["multimedia::images", "command-line-utilities"]
+# Nothing is released until it is stable (Baris, 2026-10-29).
+publish = false
+
+[dependencies]
+# JPEG and PNG. No default features: no rayon, and none of the other formats,
+# so the decoders imagoverto exposes are exactly the ones it chose.
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+# WebP encode and decode.
+zenwebp = "0.4.6"
+# JPEG XL encode and decode.
+zenjxl = { version = "0.2.1", default-features = false, features = ["encode", "decode"] }
+# AVIF encode. Called directly rather than through zenavif: zenavif always
+# depends on rav1d-safe, and its newest release (0.1.6) pins the 0.5 line,
+# whose decoder hangs and mis-decodes (imazen/zenavif#78). No default
+# features: `asm` needs nasm, and the family builds with no C toolchain.
+zenravif = { version = "0.1.3", default-features = false }
+# AVIF decode: the container with zenavif-parse, the AV1 data with rav1d-safe.
+# 0.6.0 is the first rav1d-safe that matches dav1d byte for byte (epublift,
+# 0/480 frames differ, 0/9 hangs, 2026-10-29). Baris's decision, 2026-10-29.
+zenavif-parse = "0.6.2"
+rav1d-safe = "0.6.0"

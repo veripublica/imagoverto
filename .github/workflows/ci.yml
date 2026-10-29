@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # ubuntu-latest ships stable Rust + rustfmt + clippy; we only add the
+      # wasm target for the build below. All deps come from crates.io.
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Format (cargo fmt --check)
+        run: cargo fmt --all --check
+
+      - name: Lint (clippy, warnings denied)
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # Broken intra-doc links and bare URLs show up only as rustdoc warnings,
+      # so warnings are denied (the family's gate).
+      - name: Docs (rustdoc, warnings denied)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --locked
+
+      # The browser estimator is a named need (starting brief, 2026-10-29), so
+      # the library must keep compiling to WebAssembly from the first commit.
+      - name: Build lib for wasm32
+        run: cargo build --lib --target wasm32-unknown-unknown --locked
+
+  # The codecs carry per-architecture SIMD paths, and the AVIF decoder's
+  # faults were architecture-dependent (imazen/zenavif#78, aarch64). So the
+  # tests run on x86_64 Linux and Windows and on aarch64 macOS.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Test
+        run: cargo test --locked
+
+  # The published MSRV, actually tested: `rust-version` is a promise on
+  # crates.io.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read the declared MSRV
+        id: msrv
+        run: |
+          set -euo pipefail
+          v=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
+          test -n "$v" || { echo "error: no rust-version in Cargo.toml" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "declared MSRV: $v"
+
+      - name: Install it
+        run: |
+          rustup toolchain install "${{ steps.msrv.outputs.version }}" --profile minimal
+          rustup default "${{ steps.msrv.outputs.version }}"
+          rustc -V
+
+      - name: Compile at the floor
+        run: cargo check --locked
+
+  # RustSec audit of Cargo.lock, its own job because its verdict depends on
+  # the advisory database, not on our commit. audit.yml runs it weekly too.
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # `v2` upstream is a branch, not a tag, so this pins the commit v2.0.0
+      # names (checked 2026-09-23 with git ls-remote).
+      - name: Audit dependencies
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
