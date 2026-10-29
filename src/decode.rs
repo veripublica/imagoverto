@@ -26,8 +26,8 @@ pub(crate) struct Decoded {
     pub info: Info,
 }
 
-/// Decode `bytes`. Refuses animation, images past the limits (before any
-/// pixel is allocated), and AVIF until its decoder is proven (A2).
+/// Decode `bytes`. Refuses animation and images past the limits, before any
+/// pixel is allocated.
 pub(crate) fn decode(bytes: &[u8]) -> Result<Decoded, Error> {
     let info = inspect(bytes)?;
     let format = info.format;
@@ -45,10 +45,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Decoded, Error> {
         Format::Png => decode_png(bytes),
         Format::WebP => decode_webp(bytes, &info),
         Format::Jxl => decode_jxl(bytes),
-        Format::Avif => Err(Error::Unsupported {
-            format,
-            reason: "AVIF input is refused until its decoder is verified against dav1d".into(),
-        }),
+        Format::Avif => crate::avif::decode(bytes).map(|(img, icc)| (img, icc, false)),
     })?;
     // A colour profile describes RGB; collapsing to gray would orphan it.
     let image = if icc.is_none() {
@@ -391,21 +388,6 @@ mod tests {
 
     #[test]
     fn refusals() {
-        // AVIF input, until A2.
-        use rgb::FromSlice;
-        let rgb = testimg::gradient_rgb(8, 8);
-        let avif = zenravif::Encoder::new()
-            .with_speed(10)
-            .encode_rgb(imgref::Img::new(rgb.as_raw().as_rgb(), 8, 8))
-            .unwrap()
-            .avif_file;
-        assert!(matches!(
-            decode(&avif),
-            Err(Error::Unsupported {
-                format: Format::Avif,
-                ..
-            })
-        ));
         // Past the limits, refused from the header.
         let mut big = png(&DynamicImage::ImageLuma8(testimg::gray_noise(1, 1)));
         big[16..20].copy_from_slice(&20_000u32.to_be_bytes());

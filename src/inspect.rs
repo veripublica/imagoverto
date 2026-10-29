@@ -30,8 +30,8 @@ pub struct Info {
     pub icc_profile: bool,
     /// Whether the encoding is lossless, where the header says so: always
     /// for PNG, never for JPEG; for WebP and JPEG XL from their headers.
-    /// `None` when the header does not tell, and for AVIF, whose header
-    /// imagoverto cannot yet read reliably.
+    /// `None` when the header does not tell, and for AVIF until imagoverto
+    /// has checked its reading against a lossless file.
     pub lossless: Option<bool>,
     /// For a JPEG, the libjpeg quality (1–100) its luminance table matches.
     pub jpeg_quality: Option<u8>,
@@ -155,9 +155,9 @@ pub fn inspect(bytes: &[u8]) -> Result<Info, Error> {
                     p.color_info(),
                     Some(zenavif_parse::ColorInformation::IccProfile(_))
                 ),
-                // zenavif-parse 0.6.2 misreads base_q_idx (200 for a frame
-                // that dav1d decodes bit-exact), so its lossless flag is not
-                // trusted: the header is reported as not telling.
+                // zenavif-parse's flag reads right for lossy files; it is not
+                // yet checked against a truly lossless one (no lossless AVIF
+                // encoder is at hand), so the header is reported as not telling.
                 lossless: None,
                 jpeg_quality: None,
             })

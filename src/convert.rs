@@ -14,7 +14,8 @@ pub struct Options {
     pub format: Format,
     /// The encoder quality, 1–100, on one scale across formats (WebP's).
     /// Always a lossy encode; 100 is the highest lossy quality, not lossless.
-    /// `None` converts losslessly, which JPEG cannot do.
+    /// `None` converts losslessly, which JPEG cannot do, and AVIF cannot do
+    /// yet: its encoder has no lossless mode.
     pub quality: Option<u8>,
     /// Flatten transparency onto this colour (R, G, B); the output then has
     /// no alpha. Needed to convert a transparent image to JPEG.
@@ -237,6 +238,12 @@ fn check_options(options: &Options) -> Result<Quality, Error> {
         (Format::Jpeg, None) => {
             invalid("JPEG has no lossless mode; give a quality (1-100) to convert to JPEG")
         }
+        (Format::Avif, None) => Err(Error::Unsupported {
+            format: Format::Avif,
+            reason: "lossless AVIF cannot be written yet (the encoder has no lossless mode); \
+                     give a quality (1-100)"
+                .into(),
+        }),
         (Format::Png, Some(_)) => {
             invalid("PNG is always lossless and has no quality; convert to PNG without one")
         }
@@ -390,29 +397,19 @@ mod tests {
         dir.join(name)
     }
 
+    /// zenravif 0.1.3's "lossless" mode is not lossless (zenrav1e 0.1.4 has
+    /// no lossless path): refused, never written as if it were.
     #[test]
-    fn lossless_avif_decodes_to_the_source_in_dav1d() {
-        let src = rgb().to_rgb8();
-        let c = convert(&png(&rgb()), &Options::new(Format::Avif)).unwrap();
-        assert_eq!(c.quality, Quality::Lossless);
-        assert_eq!(inspect(&c.bytes).unwrap().bit_depth, 8);
-        // Our own AVIF decoder comes in A2; until then dav1d checks the
-        // planes when it is installed. Lossless AVIF is GBR (matrix 0).
-        let p = zenavif_parse::AvifParser::from_bytes(&c.bytes).unwrap();
-        let (obu, yuv) = (tmp("lossless.obu"), tmp("lossless.yuv"));
-        std::fs::write(&obu, &*p.primary_data().unwrap()).unwrap();
-        let demux = std::path::Path::new("--demuxer=section5");
-        let (i, o) = (std::path::Path::new("-i"), std::path::Path::new("-o"));
-        if run("dav1d", &[demux, i, &obu, o, &yuv]).is_none() {
-            eprintln!("dav1d not available: lossless AVIF pixels not checked");
-            return;
-        }
-        let planes = std::fs::read(&yuv).unwrap();
-        let n = (src.width() * src.height()) as usize;
-        let (g, b, r) = (&planes[..n], &planes[n..2 * n], &planes[2 * n..3 * n]);
-        for (k, p) in src.pixels().enumerate() {
-            assert_eq!([r[k], g[k], b[k]], p.0, "pixel {k}");
-        }
+    fn lossless_avif_is_refused() {
+        assert!(matches!(
+            convert(&png(&rgb()), &Options::new(Format::Avif)),
+            Err(Error::Unsupported {
+                format: Format::Avif,
+                ..
+            })
+        ));
+        let c = convert(&png(&rgb()), &Options::new(Format::Avif).with_quality(90)).unwrap();
+        assert!(testimg::psnr(&pixels(&c.bytes), &rgb()) > 35.0);
     }
 
     #[test]
@@ -489,12 +486,13 @@ mod tests {
             let c = convert(&input, &Options::new(target)).unwrap();
             assert_eq!(pixels(&c.bytes), deep, "{target}");
         }
-        for target in [Format::WebP, Format::Avif] {
-            assert_eq!(
-                convert(&input, &Options::new(target)),
-                Err(Error::BitDepthTooHigh { bits: 16, target })
-            );
-        }
+        assert_eq!(
+            convert(&input, &Options::new(Format::WebP)),
+            Err(Error::BitDepthTooHigh {
+                bits: 16,
+                target: Format::WebP
+            })
+        );
         let c = convert(&input, &Options::new(Format::WebP).with_quality(90)).unwrap();
         assert!(c.findings.contains(&Finding::BitDepthReduced));
         // 8-bit values widened to 16 bits lose nothing going back.

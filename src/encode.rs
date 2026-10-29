@@ -200,24 +200,23 @@ fn avif_quality(webp_quality: u8) -> f32 {
     (0.017529 * q * q - 1.70862 * q + 95.783).clamp(1.0, 100.0)
 }
 
-/// AVIF, 8-bit. Lossless uses quantizer 0 in the RGB colour model at 4:4:4,
-/// so no RGB → YCbCr rounding happens. Gray is expanded to RGB (exactly).
+/// AVIF, 8-bit, lossy. There is no lossless AVIF: zenravif 0.1.3 offers a
+/// lossless switch, but zenrav1e 0.1.4 has no lossless path, and its output
+/// differs from the source (measured 2026-10-29, confirmed by dav1d). The
+/// caller refuses lossless AVIF before encoding.
 fn encode_avif(img: &DynamicImage, icc: Option<&[u8]>, mode: Mode) -> Result<Vec<u8>, Error> {
     use rgb::FromSlice;
-    use zenravif::{BitDepth, ColorModel, Encoder};
+    // Never `AlphaColorMode::Premultiplied`: zenravif 0.1.3 writes alpha 255
+    // as about 1 in that mode (measured 2026-10-29, confirmed by dav1d). The
+    // default, `UnassociatedClean`, only rewrites colour where alpha hides it.
+    use zenravif::{BitDepth, Encoder};
+    let Mode::Lossy(q) = mode else {
+        unreachable!("lossless AVIF is refused before encoding");
+    };
     let mut enc = Encoder::new()
         .with_speed(AVIF_SPEED)
-        .with_bit_depth(BitDepth::Eight);
-    enc = match mode {
-        // Quantizer 0 alone is not lossless: quantisation matrices and
-        // variance-adaptive quantisation still vary q per block.
-        Mode::Lossless => enc
-            .with_lossless(true)
-            .with_qm(false)
-            .with_vaq(false, 1.0)
-            .with_internal_color_model(ColorModel::RGB),
-        Mode::Lossy(q) => enc.with_quality(avif_quality(q)),
-    };
+        .with_bit_depth(BitDepth::Eight)
+        .with_quality(avif_quality(q));
     if let Some(icc) = icc {
         enc = enc.with_icc_profile(icc.to_vec());
     }

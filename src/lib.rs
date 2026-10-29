@@ -3,6 +3,7 @@
 //! [`convert`] turns one image into another; [`inspect`] reads what a file's
 //! header says. Being built: AVIF input is refused for now.
 
+mod avif;
 mod convert;
 mod decode;
 mod encode;
