@@ -22,11 +22,16 @@ image = { version = "0.25.10", default-features = false, features = ["jpeg", "pn
 zenwebp = "0.4.6"
 # JPEG XL encode and decode.
 zenjxl = { version = "0.2.1", default-features = false, features = ["encode", "decode"] }
+# zenjxl's encoder, named directly only for `jpeg-reencoding`: JPEG -> JPEG XL
+# that a decoder can turn back into the original JPEG, byte for byte. zenjxl
+# does not expose it. Same version zenjxl resolves.
+jxl-encoder = { version = "0.3.4", default-features = false, features = ["jpeg-reencoding"] }
 # AVIF encode. Called directly rather than through zenavif: zenavif always
 # depends on rav1d-safe, and its newest release (0.1.6) pins the 0.5 line,
 # whose decoder hangs and mis-decodes (imazen/zenavif#78). No default
 # features: `asm` needs nasm, and the family builds with no C toolchain.
-zenravif = { version = "0.1.3", default-features = false }
+# `imazen` adds no dependency; it exposes the lossless mode (quantizer 0).
+zenravif = { version = "0.1.3", default-features = false, features = ["imazen"] }
 # AVIF decode: the container with zenavif-parse, the AV1 data with rav1d-safe.
 # 0.6.0 is the first rav1d-safe that matches dav1d byte for byte (epublift,
 # 0/480 frames differ, 0/9 hangs, 2026-10-29). Baris's decision, 2026-10-29.
@@ -35,3 +40,9 @@ rav1d-safe = "0.6.0"
 # The pixel-buffer types zenravif's encoder takes.
 imgref = "1.12.0"
 rgb = "0.8.52"
+# The pixel buffers zenjxl's decoder returns.
+zenpixels = "0.2.16"
+
+[dev-dependencies]
+# A valid ICC profile for the tests (sRGB); `image` already depends on it.
+moxcms = "0.8.1"

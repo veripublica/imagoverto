@@ -1,8 +1,11 @@
 //! Converts still images between WebP, AVIF, JPEG XL, JPEG and PNG.
 //!
-//! Being built: today it recognises the five formats and reads their headers
-//! ([`inspect`]).
+//! [`convert`] turns one image into another; [`inspect`] reads what a file's
+//! header says. Being built: AVIF input is refused for now.
 
+mod convert;
+mod decode;
+mod encode;
 mod error;
 mod format;
 mod inspect;
@@ -11,6 +14,7 @@ mod limits;
 #[cfg(test)]
 mod testimg;
 
+pub use convert::{Conversion, Finding, Options, Quality, Severity, convert};
 pub use error::Error;
 pub use format::Format;
 pub use inspect::{Info, inspect};
