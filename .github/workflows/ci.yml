@@ -53,6 +53,13 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The reference decoders and encoder some tests compare against
+      # (dav1d, djxl, avifenc). A test whose tool is missing says so and
+      # passes, so without this step those checks would silently not run.
+      - name: Install reference tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y dav1d libjxl-tools libavif-bin
+
       - name: Test
         run: cargo test --locked
 

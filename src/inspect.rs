@@ -30,8 +30,8 @@ pub struct Info {
     pub icc_profile: bool,
     /// Whether the encoding is lossless, where the header says so: always
     /// for PNG, never for JPEG; for WebP and JPEG XL from their headers.
-    /// `None` when the header does not tell, and for AVIF until imagoverto
-    /// has checked its reading against a lossless file.
+    /// `None` when the header does not tell, and for AVIF, whose header
+    /// reader misreads this (imazen/zenavif#46).
     pub lossless: Option<bool>,
     /// For a JPEG, the libjpeg quality (1–100) its luminance table matches.
     pub jpeg_quality: Option<u8>,
@@ -155,9 +155,11 @@ pub fn inspect(bytes: &[u8]) -> Result<Info, Error> {
                     p.color_info(),
                     Some(zenavif_parse::ColorInformation::IccProfile(_))
                 ),
-                // zenavif-parse's flag reads right for lossy files; it is not
-                // yet checked against a truly lossless one (no lossless AVIF
-                // encoder is at hand), so the header is reported as not telling.
+                // zenavif-parse 0.6.2 misreads the frame header of the reduced
+                // still-picture headers most encoders write (imazen/zenavif#46,
+                // fixed on its main after 0.6.2): a libavif lossless file reads
+                // as base_q_idx 32, lossless false. Not trusted until a release
+                // with the fix.
                 lossless: None,
                 jpeg_quality: None,
             })

@@ -68,11 +68,15 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<(DynamicImage, Option<Vec<u8>>), Er
             _ => img,
         };
     }
+    // ISO/IEC 23008-12:2022 §6.5.12: axis 0 exchanges top and bottom, axis 1
+    // left and right (libavif, Chromium, Firefox and libheif read it so).
+    // zenavif-parse's and zenravif's documentation give the 2017 wording,
+    // which is the reverse.
     if let Some(m) = parser.mirror() {
         img = if m.axis == 0 {
-            img.fliph()
-        } else {
             img.flipv()
+        } else {
+            img.fliph()
         };
     }
     Ok((img, icc))
@@ -615,8 +619,9 @@ mod tests {
             (fine().with_rotation(1), src.rotate270()),
             (fine().with_rotation(2), src.rotate180()),
             (fine().with_rotation(3), src.rotate90()),
-            (fine().with_mirror(0), src.fliph()),
-            (fine().with_mirror(1), src.flipv()),
+            // zenravif writes the axis number it is given; read per HEIF 2022.
+            (fine().with_mirror(0), src.flipv()),
+            (fine().with_mirror(1), src.fliph()),
         ];
         for (i, (enc, want)) in cases.into_iter().enumerate() {
             let (img, _) = decode(&encode_rgb(&rgb, enc)).unwrap();
@@ -702,5 +707,133 @@ mod tests {
             assert_eq!(mine.len(), theirs.len(), "{sub:?}");
             assert!(mine == theirs, "{sub:?}: planes differ from dav1d");
         }
+    }
+
+    /// A reference AVIF from libavif's `avifenc`, made from `src` with `args`;
+    /// `None` when avifenc is not installed.
+    fn avifenc(src: &DynamicImage, args: &[&str], name: &str) -> Option<Vec<u8>> {
+        let dir = std::env::temp_dir().join(format!("imagoverto-avifenc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (png, avif) = (
+            dir.join(format!("{name}.png")),
+            dir.join(format!("{name}.avif")),
+        );
+        src.save(&png).unwrap();
+        let out = std::process::Command::new("avifenc")
+            .args(args)
+            .arg(&png)
+            .arg(&avif)
+            .output()
+            .ok()?;
+        assert!(
+            out.status.success(),
+            "avifenc {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Some(std::fs::read(&avif).unwrap())
+    }
+
+    macro_rules! reference {
+        ($src:expr, $args:expr, $name:expr) => {
+            match avifenc($src, $args, $name) {
+                Some(b) => b,
+                None => {
+                    eprintln!("avifenc not available: libavif reference not checked");
+                    return;
+                }
+            }
+        };
+    }
+
+    #[test]
+    fn libavif_lossless_is_exact() {
+        let rgb = DynamicImage::ImageRgb8(testimg::gradient_rgb(45, 31));
+        let noise = DynamicImage::ImageLuma8(testimg::gray_noise(45, 31)).to_rgb8();
+        for (name, src) in [("rgb", rgb), ("noise", DynamicImage::ImageRgb8(noise))] {
+            let avif = reference!(&src, &["-l", "-s", "8"], name);
+            let (img, icc) = decode(&avif).unwrap();
+            assert_eq!(img, src, "{name}");
+            assert!(icc.is_none());
+        }
+        let rgba = DynamicImage::ImageRgba8(testimg::gradient_rgba(45, 31));
+        let avif = reference!(&rgba, &["-l", "-s", "8"], "rgba");
+        assert_eq!(decode(&avif).unwrap().0, rgba);
+    }
+
+    #[test]
+    fn libavif_monochrome_and_grid() {
+        let gray = DynamicImage::ImageLuma8(testimg::gray_noise(40, 24));
+        let avif = reference!(&gray, &["-l", "-y", "400", "-s", "8"], "mono");
+        let (img, _) = decode(&avif).unwrap();
+        assert_eq!(img, gray);
+        // A 2x2 grid of one image's four quarters.
+        // avifenc wants at least 64 pixels per cell.
+        let rgb = DynamicImage::ImageRgb8(testimg::gradient_rgb(160, 128));
+        let avif = reference!(&rgb, &["-l", "-g", "2x2", "-s", "8"], "grid");
+        assert!(
+            AvifParser::from_bytes(&avif)
+                .unwrap()
+                .grid_config()
+                .is_some()
+        );
+        assert_eq!(decode(&avif).unwrap().0, rgb);
+    }
+
+    #[test]
+    fn libavif_orientation_matches() {
+        let src = DynamicImage::ImageRgb8(testimg::gradient_rgb(32, 16));
+        let cases: [(&[&str], DynamicImage); 4] = [
+            (&["-l", "--irot", "1"], src.rotate270()),
+            (&["-l", "--irot", "3"], src.rotate90()),
+            (&["-l", "--imir", "0"], src.flipv()),
+            (&["-l", "--imir", "1"], src.fliph()),
+        ];
+        for (i, (args, want)) in cases.into_iter().enumerate() {
+            let avif = reference!(&src, args, &format!("orient{i}"));
+            assert_eq!(decode(&avif).unwrap().0, want, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn libavif_lossy_variants_are_close() {
+        let src = DynamicImage::ImageRgb8(testimg::gradient_rgb(64, 48));
+        let cases: [(&[&str], &str, f64); 5] = [
+            (&["-q", "90", "-y", "420"], "420", 38.0),
+            (&["-q", "90", "-y", "422"], "422", 38.0),
+            (&["-q", "90", "-r", "limited"], "limited", 38.0),
+            (&["-q", "90", "-d", "10"], "10bit", 38.0),
+            (&["-q", "90", "-d", "12", "-y", "444"], "12bit", 38.0),
+        ];
+        for (args, name, min) in cases {
+            let avif = reference!(&src, args, name);
+            let (img, _) = decode(&avif).unwrap();
+            let db = psnr(&img, &src);
+            assert!(db > min, "{name}: {db:.1} dB");
+        }
+        // Premultiplied alpha, undone.
+        let rgba = DynamicImage::ImageRgba8(testimg::gradient_rgba(64, 48));
+        let avif = reference!(&rgba, &["-q", "95", "--qalpha", "100", "-p"], "prem");
+        assert!(AvifParser::from_bytes(&avif).unwrap().premultiplied_alpha());
+        let out = decode(&avif).unwrap().0.to_rgba8();
+        let src = rgba.to_rgba8();
+        let worst = out
+            .pixels()
+            .zip(src.pixels())
+            .filter(|(_, q)| q[3] >= 64)
+            .flat_map(|(p, q)| (0..3).map(move |c| p[c].abs_diff(q[c])))
+            .max()
+            .unwrap();
+        assert!(worst <= 12, "premultiplied colour off by {worst}");
+    }
+
+    #[test]
+    fn libavif_display_p3_gets_a_profile() {
+        let src = DynamicImage::ImageRgb8(testimg::gradient_rgb(16, 16));
+        let avif = reference!(&src, &["-q", "90", "--cicp", "12/13/1"], "p3");
+        let (_, icc) = decode(&avif).unwrap();
+        let icc = icc.expect("a Display P3 profile");
+        assert_eq!(&icc[36..40], b"acsp");
+        let hdr = reference!(&src, &["-q", "90", "--cicp", "9/16/9", "-d", "10"], "pq");
+        assert!(matches!(decode(&hdr), Err(Error::Unsupported { .. })));
     }
 }
