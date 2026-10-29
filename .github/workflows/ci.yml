@@ -63,6 +63,31 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+  # Compiling to wasm32 is not running on it: the codecs' SIMD and threading
+  # paths differ there. So the tests also run on wasm32-wasip1 under
+  # wasmtime (tests that need a process or a temp dir skip themselves).
+  wasm-test:
+    runs-on: ubuntu-latest
+    env:
+      WASMTIME: "50.0.0"
+      CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime run
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Add the WASI target
+        run: rustup target add wasm32-wasip1
+
+      - name: Install wasmtime
+        run: |
+          set -euo pipefail
+          url="https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME}/wasmtime-v${WASMTIME}-x86_64-linux.tar.xz"
+          curl -sSfL "$url" | tar -xJ
+          echo "$PWD/wasmtime-v${WASMTIME}-x86_64-linux" >> "$GITHUB_PATH"
+
+      - name: Test on wasm32-wasip1
+        run: cargo test --locked --target wasm32-wasip1 -- --test-threads=1
+
   # The published MSRV, actually tested: `rust-version` is a promise on
   # crates.io.
   msrv:

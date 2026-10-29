@@ -1,7 +1,11 @@
 //! Converts still images between WebP, AVIF, JPEG XL, JPEG and PNG.
 //!
 //! [`convert`] turns one image into another; [`inspect`] reads what a file's
-//! header says. Being built: AVIF input is refused for now.
+//! header says.
+//!
+//! Failures come back as [`Error`] values. A panic inside a codec is caught
+//! and returned as [`Error::Internal`], except on WebAssembly, where a panic
+//! aborts the instance: wasm has no unwinding to catch it with.
 
 mod avif;
 mod convert;

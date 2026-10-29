@@ -583,11 +583,18 @@ mod tests {
     fn issue_78_gray_noise_does_not_hang() {
         let gray = image::DynamicImage::ImageLuma8(testimg::gray_noise(787, 503)).to_rgb8();
         let avif = encode_rgb(&gray, Encoder::new().with_quality(71.3).with_speed(10));
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || tx.send(decode(&avif).map(|(i, _)| (i.width(), i.height()))));
-        let got = rx
-            .recv_timeout(std::time::Duration::from_secs(60))
-            .expect("decode hung");
+        // wasm has no threads to watch from; there the test only decodes.
+        #[cfg(target_family = "wasm")]
+        let got = decode(&avif).map(|(i, _)| (i.width(), i.height()));
+        #[cfg(not(target_family = "wasm"))]
+        let got = {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                tx.send(decode(&avif).map(|(i, _)| (i.width(), i.height())))
+            });
+            rx.recv_timeout(std::time::Duration::from_secs(60))
+                .expect("decode hung")
+        };
         assert_eq!(got.unwrap(), (787, 503));
     }
 
@@ -659,6 +666,9 @@ mod tests {
     /// Our planes against dav1d's, byte for byte, when dav1d is installed.
     #[test]
     fn planes_match_dav1d() {
+        if cfg!(target_family = "wasm") {
+            return; // no processes
+        }
         let src = testimg::gradient_rgb(582, 55);
         let dir = std::env::temp_dir().join(format!("imagoverto-avif-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -712,6 +722,9 @@ mod tests {
     /// A reference AVIF from libavif's `avifenc`, made from `src` with `args`;
     /// `None` when avifenc is not installed.
     fn avifenc(src: &DynamicImage, args: &[&str], name: &str) -> Option<Vec<u8>> {
+        if cfg!(target_family = "wasm") {
+            return None; // no processes
+        }
         let dir = std::env::temp_dir().join(format!("imagoverto-avifenc-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let (png, avif) = (

@@ -382,6 +382,9 @@ mod tests {
 
     /// Runs `tool args…` if it is installed; `None` when it is not.
     fn run(tool: &str, args: &[&std::path::Path]) -> Option<()> {
+        if cfg!(target_family = "wasm") {
+            return None; // no processes
+        }
         let o = std::process::Command::new(tool).args(args).output().ok()?;
         assert!(
             o.status.success(),
@@ -533,6 +536,9 @@ mod tests {
         assert_eq!(c.quality, Quality::Lossless);
         assert_eq!(c.findings, [Finding::JpegKept]);
         // When djxl is installed, check the reconstruction byte for byte.
+        if cfg!(target_family = "wasm") {
+            return; // no processes, no temp dir
+        }
         let (jxl, back) = (tmp("kept.jxl"), tmp("kept.jpg"));
         std::fs::write(&jxl, &c.bytes).unwrap();
         match run("djxl", &[&jxl, &back]) {
