@@ -408,7 +408,9 @@ name = "imagoverto"
 version = "0.0.0"
 dependencies = [
  "image",
+ "imgref",
  "rav1d-safe",
+ "rgb",
  "zenavif-parse",
  "zenjxl",
  "zenravif",
