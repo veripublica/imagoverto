@@ -61,6 +61,13 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Decoded, Error> {
     })
 }
 
+/// Decode `bytes` fully, under the same rules as a conversion, and return
+/// the header facts: the answer to "does this image actually decode?". The
+/// pixels are discarded.
+pub fn decode_check(bytes: &[u8]) -> Result<Info, Error> {
+    decode(bytes).map(|d| d.info)
+}
+
 type Pixels = (DynamicImage, Option<Vec<u8>>, bool);
 
 /// Run a codec so that a panic inside it comes back as an error, never as a

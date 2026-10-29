@@ -43,6 +43,13 @@ impl Options {
         self.background = Some(rgb);
         self
     }
+
+    /// Whether these options can be honoured for some image, checked without
+    /// one: fails with [`Error::InvalidOptions`] for a JPEG or AVIF target
+    /// without a quality, PNG with one, or a quality outside 1–100.
+    pub fn check(&self) -> Result<(), Error> {
+        check_options(self).map(|_| ())
+    }
 }
 
 /// How the output was encoded.
@@ -90,6 +97,33 @@ impl Finding {
         match self {
             Finding::LosslessToLossy | Finding::JpegNotKept => Severity::Warning,
             _ => Severity::Info,
+        }
+    }
+
+    /// The stable code machine output carries (veripublica FORMATS §1.3,
+    /// tool-owned `IMG-` prefix).
+    pub fn code(self) -> &'static str {
+        match self {
+            Finding::LossyEncode => "IMG-001",
+            Finding::LosslessToLossy => "IMG-002",
+            Finding::Flattened => "IMG-003",
+            Finding::BitDepthReduced => "IMG-004",
+            Finding::TreatedAsGray => "IMG-005",
+            Finding::JpegKept => "IMG-006",
+            Finding::JpegNotKept => "IMG-007",
+        }
+    }
+
+    /// A readable name for [`code`](Finding::code).
+    pub fn rule(self) -> &'static str {
+        match self {
+            Finding::LossyEncode => "convert.lossy",
+            Finding::LosslessToLossy => "convert.lossless_to_lossy",
+            Finding::Flattened => "convert.flattened",
+            Finding::BitDepthReduced => "convert.depth_reduced",
+            Finding::TreatedAsGray => "convert.near_gray",
+            Finding::JpegKept => "convert.jpeg_kept",
+            Finding::JpegNotKept => "convert.jpeg_not_kept",
         }
     }
 
@@ -238,12 +272,10 @@ fn check_options(options: &Options) -> Result<Quality, Error> {
         (Format::Jpeg, None) => {
             invalid("JPEG has no lossless mode; give a quality (1-100) to convert to JPEG")
         }
-        (Format::Avif, None) => Err(Error::Unsupported {
-            format: Format::Avif,
-            reason: "lossless AVIF cannot be written yet (the encoder has no lossless mode); \
-                     give a quality (1-100)"
-                .into(),
-        }),
+        (Format::Avif, None) => invalid(
+            "lossless AVIF cannot be written yet (the encoder has no lossless mode); \
+             give a quality (1-100) to convert to AVIF",
+        ),
         (Format::Png, Some(_)) => {
             invalid("PNG is always lossless and has no quality; convert to PNG without one")
         }
@@ -406,11 +438,10 @@ mod tests {
     fn lossless_avif_is_refused() {
         assert!(matches!(
             convert(&png(&rgb()), &Options::new(Format::Avif)),
-            Err(Error::Unsupported {
-                format: Format::Avif,
-                ..
-            })
+            Err(Error::InvalidOptions { .. })
         ));
+        assert!(Options::new(Format::Avif).check().is_err());
+        assert!(Options::new(Format::Avif).with_quality(50).check().is_ok());
         let c = convert(&png(&rgb()), &Options::new(Format::Avif).with_quality(90)).unwrap();
         assert!(testimg::psnr(&pixels(&c.bytes), &rgb()) > 35.0);
     }

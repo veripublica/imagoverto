@@ -14,7 +14,20 @@ categories = ["multimedia::images", "command-line-utilities"]
 # Nothing is released until it is stable (Baris, 2026-10-29).
 publish = false
 
+[features]
+default = ["cli"]
+# The command-line tool and its JSON report. A library user (epublift, a wasm
+# build) turns default features off and gets neither serde nor the binary.
+cli = ["dep:serde", "dep:serde_json"]
+
+[[bin]]
+name = "imagoverto"
+path = "src/main.rs"
+required-features = ["cli"]
+
 [dependencies]
+serde = { version = "1.0.228", features = ["derive"], optional = true }
+serde_json = { version = "1.0.145", optional = true }
 # JPEG and PNG. No default features: no rayon, and none of the other formats,
 # so the decoders imagoverto exposes are exactly the ones it chose.
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }

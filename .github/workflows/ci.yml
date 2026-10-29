@@ -40,6 +40,10 @@ jobs:
       - name: Build lib for wasm32
         run: cargo build --lib --target wasm32-unknown-unknown --locked
 
+      # What a library user (epublift, a wasm binding) builds: no CLI, no serde.
+      - name: Build lib without default features
+        run: cargo check --lib --no-default-features --locked
+
   # The codecs carry per-architecture SIMD paths, and the AVIF decoder's
   # faults were architecture-dependent (imazen/zenavif#78, aarch64). So the
   # tests run on x86_64 Linux and Windows and on aarch64 macOS.

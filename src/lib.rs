@@ -20,6 +20,7 @@ mod limits;
 mod testimg;
 
 pub use convert::{Conversion, Finding, Options, Quality, Severity, convert};
+pub use decode::decode_check;
 pub use error::Error;
 pub use format::Format;
 pub use inspect::{Info, inspect};
