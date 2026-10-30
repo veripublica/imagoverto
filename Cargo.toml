@@ -58,3 +58,7 @@ moxcms = "0.8.1"
 # The pixel buffers zenjxl's decoder returns.
 zenpixels = "0.2.16"
 
+
+[dev-dependencies]
+# The calibration tool (examples/calibrate.rs) only; never shipped.
+butteraugli = "0.9.3"
