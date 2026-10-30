@@ -45,6 +45,38 @@ write to us. The copyright holder can grant other terms for `imagoverto`'s own
 code. For the codecs you would also need terms from
 [Imazen](https://github.com/imazen).
 
+## What is it built on, and under which licenses?
+
+The codecs that matter for licensing are these. The full list is in
+`Cargo.lock`, and `cargo tree` shows how each one gets pulled in.
+
+| Crate | What for | License |
+|---|---|---|
+| `zenwebp` | WebP read and write | AGPL-3.0-only OR LicenseRef-Imazen-Commercial |
+| `zenjxl`, `jxl-encoder` (with `jxl-encoder-simd`, `zenjpeg`) | JPEG XL read and write, JPEG → JPEG XL recompression | AGPL-3.0-only OR LicenseRef-Imazen-Commercial |
+| `zenravif`, `zenrav1e` | AVIF write | AGPL-3.0-only OR LicenseRef-Imazen-Commercial |
+| `rav1d-safe` | AVIF read (the AV1 data) | AGPL-3.0-only OR LicenseRef-Imazen-Commercial |
+| `zenavif-parse` | AVIF read (the container) | MPL-2.0 |
+| `zenavif-serialize` | AVIF write (the container) | BSD-3-Clause |
+| `image` | JPEG and PNG read and write | MIT OR Apache-2.0 |
+| `moxcms` | colour profiles | BSD-3-Clause OR Apache-2.0 |
+
+The rest are small permissive crates: MIT, Apache-2.0, BSD, Zlib, CC0 or
+Unlicense, most of them dual-licensed. All of them are compatible with
+AGPL-3.0-only.
+
+**Three of these come from git, not crates.io.** `zenravif` (from
+[imazen/cavif-rs](https://github.com/imazen/cavif-rs)), `zenrav1e` and
+`zenavif-serialize` are taken from Imazen's repositories, each pinned to one
+commit. The released `zenravif` 0.1.3 damages some real images, and its
+lossless mode loses pixels. The unreleased 0.2.0 fixes both. Their licenses
+are the same as above. imagoverto moves to the crates.io release when it is
+published. A project that depends on imagoverto needs the same
+`[patch.crates-io]` line for `zenavif-serialize`; the README shows it.
+
+`ravif`, the BSD-licensed AVIF encoder that `zenravif` was forked from, is
+not used. It was measured as an alternative and not taken.
+
 ## Can a Sigil or calibre plugin use `imagoverto`? Can GPL-3.0 software?
 
 Yes to both. The reasoning is in the
