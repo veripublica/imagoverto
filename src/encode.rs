@@ -117,11 +117,11 @@ fn encode_jpeg(img: &DynamicImage, icc: Option<&[u8]>, quality: u8) -> Result<Ve
 /// The `image` crate's JPEG quality for a WebP-scale quality: the JPEG quality
 /// whose mean butteraugli distance (3-norm) matches WebP's, fitted over 60
 /// photos and 60 drawings from Baris's shelf (measured 2026-10-30,
-/// `examples/calibrate.rs`; photos sit about 5 above the curve, drawings
-/// about 5 below). Clamped to the fitted range, as for [`jxl_distance`].
+/// `examples/calibrate.rs`; photos match about 5 below the curve, drawings
+/// about 5 above). Clamped to the fitted range, as for [`jxl_distance`].
 fn jpeg_quality(webp_quality: u8) -> u8 {
     let q = f32::from(webp_quality).clamp(45.0, 95.0);
-    (0.004786 * q * q - 0.20686 * q + 67.868).round() as u8
+    (0.004615 * q * q - 0.17453 * q + 65.691).round() as u8
 }
 
 /// WebP, 8-bit. Lossless keeps RGB under fully transparent pixels (`exact`).
@@ -201,30 +201,35 @@ fn ne_bytes(px: Vec<u16>) -> Vec<u8> {
     px.into_iter().flat_map(u16::to_ne_bytes).collect()
 }
 
-/// The AVIF quality for a WebP-scale quality (epublift's fit, as for
-/// [`jxl_distance`]).
+/// The zenravif quality for a WebP-scale quality: the one whose mean
+/// butteraugli distance (3-norm) matches WebP's, fitted over 60 photos and
+/// 60 drawings from Baris's shelf with zenravif main at speed 4, 8-bit
+/// (measured 2026-10-30; both sets within 3.8 of the curve). Clamped to the
+/// fitted range, as for [`jxl_distance`].
 fn avif_quality(webp_quality: u8) -> f32 {
     let q = f32::from(webp_quality).clamp(45.0, 95.0);
-    (0.017529 * q * q - 1.70862 * q + 95.783).clamp(1.0, 100.0)
+    (0.010328 * q * q - 0.90860 * q + 70.510).clamp(1.0, 100.0)
 }
 
-/// AVIF, 8-bit, lossy. There is no lossless AVIF: zenravif 0.1.3 offers a
-/// lossless switch, but zenrav1e 0.1.4 has no lossless path, and its output
-/// differs from the source (measured 2026-10-29, confirmed by dav1d). The
-/// caller refuses lossless AVIF before encoding.
+/// AVIF, 8-bit. Gray without alpha is written monochrome (one plane).
+/// Lossless is quantizer 0 on RGB planes (identity matrix, 4:4:4, full range)
+/// with the colour under transparent pixels kept, as WebP's `exact`.
 fn encode_avif(img: &DynamicImage, icc: Option<&[u8]>, mode: Mode) -> Result<Vec<u8>, Error> {
     use rgb::FromSlice;
-    // Never `AlphaColorMode::Premultiplied`: zenravif 0.1.3 writes alpha 255
-    // as about 1 in that mode (measured 2026-10-29, confirmed by dav1d). The
-    // default, `UnassociatedClean`, only rewrites colour where alpha hides it.
-    use zenravif::{BitDepth, Encoder};
-    let Mode::Lossy(q) = mode else {
-        unreachable!("lossless AVIF is refused before encoding");
-    };
+    use zenravif::{AlphaColorMode, BitDepth, ColorModel, Encoder};
     let mut enc = Encoder::new()
         .with_speed(AVIF_SPEED)
-        .with_bit_depth(BitDepth::Eight)
-        .with_quality(avif_quality(q));
+        .with_bit_depth(BitDepth::Eight);
+    enc = match mode {
+        Mode::Lossless => enc
+            .with_lossless(true)
+            .with_internal_color_model(ColorModel::RGB)
+            .with_alpha_color_mode(AlphaColorMode::UnassociatedDirty),
+        // The default alpha mode, `UnassociatedClean`, only rewrites colour
+        // where alpha hides it. Never `Premultiplied`: 0.1.3 wrote alpha 255
+        // as about 1 there, and nothing here needs it.
+        Mode::Lossy(q) => enc.with_quality(avif_quality(q)),
+    };
     if let Some(icc) = icc {
         enc = enc.with_icc_profile(icc.to_vec());
     }
@@ -232,6 +237,9 @@ fn encode_avif(img: &DynamicImage, icc: Option<&[u8]>, mode: Mode) -> Result<Vec
     let res = if img.color().has_alpha() {
         let rgba = img.to_rgba8();
         enc.encode_rgba(imgref::Img::new(rgba.as_raw().as_rgba(), w, h))
+    } else if is_gray(img) {
+        let gray = img.to_luma8();
+        enc.encode_gray8(imgref::Img::new(gray.as_raw().as_slice(), w, h))
     } else {
         let rgb = img.to_rgb8();
         enc.encode_rgb(imgref::Img::new(rgb.as_raw().as_rgb(), w, h))

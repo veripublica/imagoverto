@@ -68,35 +68,26 @@ fn main() {
         std::process::exit(1);
     }
 
-    let mean = |format: Format, q: u8| -> (f64, f64) {
-        let (mut sum, mut bytes, mut n) = (0.0, 0.0, 0usize);
-        for (rgb, png) in &sources {
-            let Ok(c) = convert(png, &Options::new(format).with_quality(q)) else {
-                continue;
-            };
-            let Some(back) = to_rgb(&c.bytes) else {
-                continue;
-            };
-            if let Some(d) = distance(rgb, &back) {
-                sum += d;
-                bytes += c.bytes.len() as f64;
-                n += 1;
-            }
-        }
-        (sum / n as f64, bytes / n as f64 / 1024.0)
-    };
+    let formats = [Format::WebP, Format::Jpeg, Format::Avif, Format::Jxl];
+    let jobs: Vec<(Format, u8)> = WEBP_GRID
+        .iter()
+        .flat_map(|&q| formats.map(|f| (f, q)))
+        .collect();
+    let means = par_means(&sources, &jobs, |&(format, q), (rgb, png)| {
+        let c = convert(png, &Options::new(format).with_quality(q)).ok()?;
+        let back = to_rgb(&c.bytes)?;
+        Some((distance(rgb, &back)?, c.bytes.len() as f64))
+    });
 
     println!(
         "quality | webp_dist  webp_KB | jpeg_dist  jpeg_KB | avif_dist  avif_KB | jxl_dist  jxl_KB"
     );
-    for q in WEBP_GRID {
-        let (w, wkb) = mean(Format::WebP, q);
-        let (j, jkb) = mean(Format::Jpeg, q);
-        let (a, akb) = mean(Format::Avif, q);
-        let (x, xkb) = mean(Format::Jxl, q);
-        println!(
-            "{q:>7} | {w:>9.3}  {wkb:>7.1} | {j:>9.3}  {jkb:>7.1} | {a:>9.3}  {akb:>7.1} | {x:>8.3}  {xkb:>6.1}"
-        );
+    for (q, row) in WEBP_GRID.iter().zip(means.chunks(formats.len())) {
+        let cells: Vec<String> = row
+            .iter()
+            .map(|(d, kb)| format!("{d:>9.3}  {kb:>7.1}"))
+            .collect();
+        println!("{q:>7} | {}", cells.join(" | "));
     }
 }
 
@@ -139,4 +130,52 @@ fn distance(a: &image::RgbImage, b: &image::RgbImage) -> Option<f64> {
     let ib = imgref::Img::new(b.as_raw().as_rgb(), w, h);
     let r = butteraugli::butteraugli(ia, ib, &butteraugli::ButteraugliParams::new()).ok()?;
     r.pnorm(3.0)
+}
+
+/// The mean (distance, KB) of `f` over `sources` for each job, on all cores
+/// but two.
+/// Every (job, image) pair is one task, largest images first, so no core
+/// waits for a slow image at the end of each job; `None`s are skipped.
+fn par_means<J: Sync>(
+    sources: &[(image::RgbImage, Vec<u8>)],
+    jobs: &[J],
+    f: impl Fn(&J, &(image::RgbImage, Vec<u8>)) -> Option<(f64, f64)> + Sync,
+) -> Vec<(f64, f64)> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut by_size: Vec<usize> = (0..sources.len()).collect();
+    by_size.sort_by_key(|&i| std::cmp::Reverse(sources[i].0.len()));
+    let tasks: Vec<(usize, usize)> = by_size
+        .iter()
+        .flat_map(|&img| (0..jobs.len()).map(move |job| (job, img)))
+        .collect();
+    let next = AtomicUsize::new(0);
+    // Every core but two, which stay free for the system (Baris, 2026-10-30).
+    let threads =
+        std::thread::available_parallelism().map_or(1, |n| n.get().saturating_sub(2).max(1));
+    let mut totals = vec![(0.0, 0.0, 0usize); jobs.len()];
+    std::thread::scope(|s| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut part = vec![(0.0, 0.0, 0usize); jobs.len()];
+                    while let Some(&(job, img)) = tasks.get(next.fetch_add(1, Ordering::Relaxed)) {
+                        if let Some((d, b)) = f(&jobs[job], &sources[img]) {
+                            let t = &mut part[job];
+                            *t = (t.0 + d, t.1 + b, t.2 + 1);
+                        }
+                    }
+                    part
+                })
+            })
+            .collect();
+        for w in workers {
+            for (t, p) in totals.iter_mut().zip(w.join().expect("a worker panicked")) {
+                *t = (t.0 + p.0, t.1 + p.1, t.2 + p.2);
+            }
+        }
+    });
+    totals
+        .into_iter()
+        .map(|(d, b, n)| (d / n as f64, b / n as f64 / 1024.0))
+        .collect()
 }

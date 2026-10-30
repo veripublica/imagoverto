@@ -1500,11 +1500,11 @@ dependencies = [
 
 [[package]]
 name = "zenavif-serialize"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbc63468f1ad230080baa8f87b0bf1b6aad9987f85e533566337181e0a5349c6"
+version = "0.2.0"
+source = "git+https://github.com/imazen/zenavif?rev=94116d266299f347cfd10a75d440a5bc3b598d2c#94116d266299f347cfd10a75d440a5bc3b598d2c"
 dependencies = [
  "arrayvec",
+ "whereat",
 ]
 
 [[package]]
@@ -1619,9 +1619,8 @@ dependencies = [
 
 [[package]]
 name = "zenrav1e"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c2f798defdace5a2d991e4f679697768cf256a3cef130bfa2d84702cebf3a76"
+version = "0.2.0"
+source = "git+https://github.com/imazen/zenrav1e?rev=9057c4bacf1d8a23974e32de09fd4446a1cc525a#9057c4bacf1d8a23974e32de09fd4446a1cc525a"
 dependencies = [
  "aligned-vec",
  "arbitrary",
@@ -1647,18 +1646,19 @@ dependencies = [
  "thiserror",
  "v_frame",
  "wasm-bindgen",
+ "whereat",
 ]
 
 [[package]]
 name = "zenravif"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51edf23ff0690e4a7c3c7df67ee2143709f9bf33ecb8785cfffa33bba95ac314"
+version = "0.2.0"
+source = "git+https://github.com/imazen/cavif-rs?rev=52bb0243a418989393c884ab0d1226c356cb2272#52bb0243a418989393c884ab0d1226c356cb2272"
 dependencies = [
  "imgref",
  "loop9",
  "quick-error",
  "rgb",
+ "whereat",
  "zenavif-serialize",
  "zenrav1e",
 ]

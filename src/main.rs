@@ -59,9 +59,9 @@ OPTIONS:
                             The format to encode to. Required.
         --quality <1-100>   Encode lossily at this quality, on one scale across
                             formats. Without it the conversion is lossless:
-                            WebP, JPEG XL and PNG in their lossless modes, and
-                            JPEG to JPEG XL keeps the original JPEG inside.
-                            JPEG and AVIF need a quality; PNG takes none.
+                            WebP, AVIF, JPEG XL and PNG in their lossless
+                            modes, and JPEG to JPEG XL keeps the original JPEG
+                            inside. JPEG needs a quality; PNG takes none.
         --background <white|black|#RRGGBB>
                             Flatten transparency onto this colour; the output
                             has no alpha. Needed to convert a transparent
@@ -984,7 +984,6 @@ mod tests {
         assert!(
             usage(&["-i", "a", "--image-format", "jpeg"]).contains("JPEG has no lossless mode")
         );
-        assert!(usage(&["-i", "a", "--image-format", "avif"]).contains("lossless AVIF"));
         assert!(usage(&["-i", "a", "--image-format", "png", "--quality", "80"]).contains("PNG"));
         // -o's extension must not name another format.
         assert!(

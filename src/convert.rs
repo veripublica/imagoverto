@@ -14,8 +14,7 @@ pub struct Options {
     pub format: Format,
     /// The encoder quality, 1–100, on one scale across formats (WebP's).
     /// Always a lossy encode; 100 is the highest lossy quality, not lossless.
-    /// `None` converts losslessly, which JPEG cannot do, and AVIF cannot do
-    /// yet: its encoder has no lossless mode.
+    /// `None` converts losslessly, which JPEG cannot do.
     pub quality: Option<u8>,
     /// Flatten transparency onto this colour (R, G, B); the output then has
     /// no alpha. Needed to convert a transparent image to JPEG.
@@ -272,10 +271,6 @@ fn check_options(options: &Options) -> Result<Quality, Error> {
         (Format::Jpeg, None) => {
             invalid("JPEG has no lossless mode; give a quality (1-100) to convert to JPEG")
         }
-        (Format::Avif, None) => invalid(
-            "lossless AVIF cannot be written yet (the encoder has no lossless mode); \
-             give a quality (1-100) to convert to AVIF",
-        ),
         (Format::Png, Some(_)) => {
             invalid("PNG is always lossless and has no quality; convert to PNG without one")
         }
@@ -432,18 +427,38 @@ mod tests {
         dir.join(name)
     }
 
-    /// zenravif 0.1.3's "lossless" mode is not lossless (zenrav1e 0.1.4 has
-    /// no lossless path): refused, never written as if it were.
+    /// Lossless AVIF is exact, read back by our decoder and by libavif's
+    /// avifdec (when installed): colour, colour under transparent pixels,
+    /// gray (monochrome) and gray noise, the image zenravif 0.1.3 got wrong.
     #[test]
-    fn lossless_avif_is_refused() {
-        assert!(matches!(
-            convert(&png(&rgb()), &Options::new(Format::Avif)),
-            Err(Error::InvalidOptions { .. })
-        ));
-        assert!(Options::new(Format::Avif).check().is_err());
-        assert!(Options::new(Format::Avif).with_quality(50).check().is_ok());
-        let c = convert(&png(&rgb()), &Options::new(Format::Avif).with_quality(90)).unwrap();
-        assert!(testimg::psnr(&pixels(&c.bytes), &rgb()) > 35.0);
+    fn lossless_avif_is_exact() {
+        let gray_alpha = DynamicImage::ImageLumaA8(rgba().to_luma_alpha8());
+        let cases = [
+            rgb(),
+            rgba(),
+            DynamicImage::ImageLuma8(testimg::gray_noise(64, 48)),
+            gray_alpha,
+        ];
+        for (i, src) in cases.into_iter().enumerate() {
+            let c = convert(&png(&src), &Options::new(Format::Avif)).unwrap();
+            assert_eq!(c.quality, Quality::Lossless);
+            assert!(c.findings.is_empty(), "{:?}: {:?}", src.color(), c.findings);
+            assert_eq!(pixels(&c.bytes), src, "ours, {:?}", src.color());
+            if cfg!(target_family = "wasm") {
+                continue; // no temp dir, no processes
+            }
+            let (avif, out) = (tmp(&format!("ll{i}.avif")), tmp(&format!("ll{i}.png")));
+            std::fs::write(&avif, &c.bytes).unwrap();
+            if run("avifdec", &[&avif, &out]).is_some() {
+                let theirs = image::open(&out).unwrap();
+                assert_eq!(
+                    theirs.to_rgba8(),
+                    src.to_rgba8(),
+                    "avifdec, {:?}",
+                    src.color()
+                );
+            }
+        }
     }
 
     #[test]
