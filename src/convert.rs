@@ -535,6 +535,41 @@ mod tests {
         assert_eq!(pixels(&c.bytes), rgb());
     }
 
+    /// zenwebp 0.4.6 copies L8 straight into VP8's limited-range Y plane, so
+    /// gray came back contrast-stretched and clipped (butteraugli 9.9 where
+    /// cwebp gave 0.5 on a book photo). Every lossy target must keep the tones.
+    #[test]
+    fn lossy_gray_keeps_its_tones() {
+        let gray = DynamicImage::ImageLuma8(rgb().to_luma8());
+        let gray_alpha = DynamicImage::ImageLumaA8(rgba().to_luma_alpha8());
+        for src in [gray, gray_alpha] {
+            for target in [Format::WebP, Format::Avif, Format::Jxl, Format::Jpeg] {
+                let opts = Options::new(target)
+                    .with_quality(90)
+                    .with_background([255; 3]);
+                let c = convert(&png(&src), &opts).unwrap();
+                let back = pixels(&c.bytes);
+                let want = if back.color().has_alpha() {
+                    src.clone()
+                } else {
+                    flatten_on_white(&src)
+                };
+                let db = testimg::psnr(&back.to_luma_alpha8().into(), &want);
+                assert!(db > 35.0, "{target} from {:?}: {db:.1} dB", src.color());
+            }
+        }
+    }
+
+    fn flatten_on_white(img: &DynamicImage) -> DynamicImage {
+        let mut out = img.to_luma_alpha8();
+        for p in out.pixels_mut() {
+            let [l, a] = p.0;
+            let v = (u32::from(l) * u32::from(a) + 255 * (255 - u32::from(a)) + 127) / 255;
+            p.0 = [v as u8, 255];
+        }
+        out.into()
+    }
+
     #[test]
     fn near_gray_webp_becomes_gray_only_when_lossy() {
         let gray = DynamicImage::ImageLuma8(testimg::gray_noise(32, 32));

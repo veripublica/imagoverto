@@ -114,20 +114,28 @@ fn encode_jpeg(img: &DynamicImage, icc: Option<&[u8]>, quality: u8) -> Result<Ve
     Ok(out)
 }
 
-/// The WebP-scale quality as the `image` crate's JPEG quality. Not calibrated
-/// yet (plan, A3): passed through.
+/// The `image` crate's JPEG quality for a WebP-scale quality: the JPEG quality
+/// whose mean butteraugli distance (3-norm) matches WebP's, fitted over 60
+/// photos and 60 drawings from Baris's shelf (measured 2026-10-30,
+/// `examples/calibrate.rs`; photos sit about 5 above the curve, drawings
+/// about 5 below). Clamped to the fitted range, as for [`jxl_distance`].
 fn jpeg_quality(webp_quality: u8) -> u8 {
-    webp_quality.clamp(1, 100)
+    let q = f32::from(webp_quality).clamp(45.0, 95.0);
+    (0.004786 * q * q - 0.20686 * q + 67.868).round() as u8
 }
 
 /// WebP, 8-bit. Lossless keeps RGB under fully transparent pixels (`exact`).
+///
+/// Gray goes in as RGB: zenwebp 0.4.6's lossy path copies L8 into the
+/// limited-range Y plane unscaled (contrast-stretched, clipped; fixed on
+/// upstream main only), and its lossless L8 path skips the full VP8L
+/// encoder (imazen/zenwebp#57). WebP stores no gray mode either way.
 fn encode_webp(img: &DynamicImage, icc: Option<&[u8]>, mode: Mode) -> Result<Vec<u8>, Error> {
     use zenwebp::{EncodeRequest, LosslessConfig, LossyConfig, PixelLayout};
-    let (px, layout) = match (is_gray(img), img.color().has_alpha()) {
-        (true, false) => (img.to_luma8().into_raw(), PixelLayout::L8),
-        (true, true) => (img.to_luma_alpha8().into_raw(), PixelLayout::La8),
-        (false, false) => (img.to_rgb8().into_raw(), PixelLayout::Rgb8),
-        (false, true) => (img.to_rgba8().into_raw(), PixelLayout::Rgba8),
+    let (px, layout) = if img.color().has_alpha() {
+        (img.to_rgba8().into_raw(), PixelLayout::Rgba8)
+    } else {
+        (img.to_rgb8().into_raw(), PixelLayout::Rgb8)
     };
     let (w, h) = (img.width(), img.height());
     let lossless = LosslessConfig::new().with_exact(true);
