@@ -33,6 +33,16 @@ pub enum Error {
     /// bits per sample than the target stores. Give a quality to accept the
     /// loss, or choose PNG or JPEG XL, which keep 16 bits.
     BitDepthTooHigh { bits: u8, target: Format },
+    /// The image has more pixels than [`Options::max_pixels`](crate::Options)
+    /// allows. Nothing was decoded.
+    TooManyPixels {
+        width: u32,
+        height: u32,
+        max_pixels: u64,
+    },
+    /// The conversion was stopped through [`Options::cancel`](crate::Options):
+    /// cancelled, or past its deadline.
+    Cancelled,
     /// A codec failed in a way that is a bug, not a property of the file (it
     /// panicked, or returned a buffer of the wrong size). Worth reporting.
     Internal { format: Format, reason: String },
@@ -69,6 +79,15 @@ impl fmt::Display for Error {
                 "the image has {bits} bits per sample and {target} stores 8, so a lossless \
                  conversion is impossible; give a quality to accept the loss, or choose PNG or JPEG XL"
             ),
+            Error::TooManyPixels {
+                width,
+                height,
+                max_pixels,
+            } => write!(
+                f,
+                "the image is {width}x{height}, more than the {max_pixels} pixels allowed"
+            ),
+            Error::Cancelled => f.write_str("the conversion was stopped before it finished"),
             Error::Internal { format, reason } => {
                 write!(f, "the {format} codec failed: {reason}")
             }

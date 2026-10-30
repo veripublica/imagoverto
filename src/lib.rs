@@ -8,6 +8,7 @@
 //! aborts the instance: wasm has no unwinding to catch it with.
 
 mod avif;
+mod cancel;
 mod convert;
 mod decode;
 mod encode;
@@ -19,7 +20,8 @@ mod limits;
 #[cfg(test)]
 mod testimg;
 
-pub use convert::{Conversion, Finding, Options, Quality, Severity, convert};
+pub use cancel::Cancel;
+pub use convert::{Compression, Conversion, Finding, Options, Quality, Severity, convert};
 pub use decode::decode_check;
 pub use error::Error;
 pub use format::Format;

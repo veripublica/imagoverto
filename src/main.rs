@@ -14,7 +14,9 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use imagoverto::{Conversion, Error, Finding, Format, Info, Options, Quality, Severity};
+use imagoverto::{
+    Compression, Conversion, Error, Finding, Format, Info, Options, Quality, Severity,
+};
 use serde::Serialize;
 
 const HELP: &str = "\
@@ -62,6 +64,13 @@ OPTIONS:
                             WebP, AVIF, JPEG XL and PNG in their lossless
                             modes, and JPEG to JPEG XL keeps the original JPEG
                             inside. JPEG needs a quality; PNG takes none.
+        --image-compression <smaller|balanced|faster>
+                            Encoding time against file size: smaller files
+                            take longer, faster encodes give larger files.
+                            The visual quality, the pixels of a lossless
+                            conversion and the image's width and height stay
+                            the same. Default: balanced. JPEG has no such
+                            setting.
         --background <white|black|#RRGGBB>
                             Flatten transparency onto this colour; the output
                             has no alpha. Needed to convert a transparent
@@ -84,8 +93,8 @@ the sizes and leaves the choice to you. Animated images are not converted.
 
 EXIT CODES:
     0   the image was converted and written.
-    2   imagoverto could not convert: a usage error (including a JPEG or AVIF
-        target without --quality, or PNG with one), an image it cannot read or
+    2   imagoverto could not convert: a usage error (including a JPEG target
+        without --quality, or PNG with one), an image it cannot read or
         convert (not one of the five formats, animated, transparent to JPEG
         without --background, 16 bits to an 8-bit format losslessly, CMYK,
         HDR), an output path that is the input, an existing output file
@@ -189,6 +198,7 @@ fn parse(args: &[String]) -> Cli {
     let mut image_format: Option<String> = None;
     let mut quality: Option<String> = None;
     let mut background: Option<String> = None;
+    let mut compression: Option<String> = None;
     let mut force = false;
     let mut help = false;
     let mut version = false;
@@ -231,7 +241,8 @@ fn parse(args: &[String]) -> Cli {
                     Some(m) => fail!("{m}"),
                     None => force = true,
                 },
-                "input" | "output" | "format" | "image-format" | "quality" | "background" => {
+                "input" | "output" | "format" | "image-format" | "quality" | "background"
+                | "image-compression" => {
                     let value = match attached {
                         Some(v) => v,
                         None => {
@@ -245,8 +256,10 @@ fn parse(args: &[String]) -> Cli {
                             }
                         }
                     };
-                    if let ("output" | "image-format" | "quality" | "background", Some(m)) =
-                        (name, convert_only(&format!("--{name}")))
+                    if let (
+                        "output" | "image-format" | "quality" | "background" | "image-compression",
+                        Some(m),
+                    ) = (name, convert_only(&format!("--{name}")))
                     {
                         fail!("{m}");
                     }
@@ -257,6 +270,9 @@ fn parse(args: &[String]) -> Cli {
                         "image-format" => set_single!(image_format, "--image-format", value),
                         "quality" => set_single!(quality, "--quality", value),
                         "background" => set_single!(background, "--background", value),
+                        "image-compression" => {
+                            set_single!(compression, "--image-compression", value)
+                        }
                         _ => unreachable!(),
                     }
                 }
@@ -361,6 +377,21 @@ fn parse(args: &[String]) -> Cli {
         },
     };
 
+    let compression = match compression.as_deref() {
+        None => None,
+        Some(c) => match c {
+            "smaller" => Some(Compression::Smaller),
+            "balanced" => Some(Compression::Balanced),
+            "faster" => Some(Compression::Faster),
+            _ => {
+                fail!(
+                    "invalid value '{c}' for --image-compression; supported values: smaller, balanced, faster"
+                );
+                None
+            }
+        },
+    };
+
     // Precedence: help short-circuits even a malformed line; a usage error
     // outranks a version request; version outranks a run; a run needs an input.
     if help {
@@ -393,6 +424,9 @@ fn parse(args: &[String]) -> Cli {
     }
     if let Some(rgb) = background {
         options = options.with_background(rgb);
+    }
+    if let Some(level) = compression {
+        options = options.with_compression(level);
     }
     // Options that no image could satisfy are the invocation's fault.
     if let Err(Error::InvalidOptions { reason }) = options.check() {
@@ -610,6 +644,14 @@ fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
+fn compression_name(c: Compression) -> &'static str {
+    match c {
+        Compression::Smaller => "smaller",
+        Compression::Faster => "faster",
+        _ => "balanced",
+    }
+}
+
 fn quality_label(q: Quality) -> String {
     match q {
         Quality::Lossless => "lossless".into(),
@@ -665,8 +707,12 @@ fn print_conversion(c: &Conversion, input: &str, out: &Path) {
             eprintln!("warning: {}", f.message());
         }
     }
+    let level = match c.compression {
+        Compression::Balanced => String::new(),
+        other => format!(", {}", compression_name(other)),
+    };
     println!(
-        "{input}: {} {}x{} → {}, {}, {} → {}",
+        "{input}: {} {}x{} → {}, {}{level}, {} → {}",
         c.source.format,
         c.source.width,
         c.source.height,
@@ -814,6 +860,7 @@ fn input_converted<'a>(c: &Conversion, path: &'a str, out: &Path) -> InputObject
             "from": c.source.format.name(),
             "to": c.format.name(),
             "quality": quality_json(c.quality),
+            "compression": compression_name(c.compression),
             "width": c.source.width,
             "height": c.source.height,
             "input_bytes": c.input_size,
@@ -930,6 +977,17 @@ mod tests {
             p(&["convert", "-ia.webp", "--image-format=jpeg", "--quality=80"]),
             want
         );
+        match p(&[
+            "-i",
+            "a.png",
+            "--image-format",
+            "avif",
+            "--image-compression",
+            "faster",
+        ]) {
+            Cli::Convert(r) => assert_eq!(r.options.compression, Compression::Faster),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -978,6 +1036,20 @@ mod tests {
         );
         assert!(
             usage(&["-i", "a", "--image-format", "png", "--background", "red"]).contains("#RRGGBB")
+        );
+        assert!(
+            usage(&[
+                "-i",
+                "a",
+                "--image-format",
+                "png",
+                "--image-compression",
+                "smallest"
+            ])
+            .contains("smaller, balanced, faster")
+        );
+        assert!(
+            usage(&["inspect", "-i", "a", "--image-compression", "faster"]).contains("for convert")
         );
         assert_eq!(usage(&["-i", "a"]), "missing required --image-format");
         // Option-level refusals, before any file is read.

@@ -10,9 +10,11 @@
 //! recursively), it decodes the source once as the reference, encodes it at a
 //! grid of qualities, decodes the result back and measures the butteraugli
 //! distance to the reference (3-norm, the score epublift's calibration used).
-//! WebP's mean distance at each quality is the anchor. For JPEG, AVIF and
-//! JPEG XL it reports the mean distance imagoverto's *calibrated* encode
-//! reaches at the same quality, against WebP's, to check each mapping.
+//! WebP's mean distance at each quality, at the default compression level,
+//! is the anchor. For JPEG, and for WebP, AVIF and JPEG XL at every
+//! compression level, it reports the mean distance imagoverto's *calibrated*
+//! encode reaches at the same quality, against the anchor, to check each
+//! mapping: a level must change the size, not the quality.
 //!
 //! The JPEG mapping itself was fitted with this tool's first version (commit
 //! 70f466f), when `jpeg_quality` still passed the quality through: it
@@ -24,7 +26,7 @@
 
 use std::path::{Path, PathBuf};
 
-use imagoverto::{Format, Options, convert};
+use imagoverto::{Compression, Format, Options, convert};
 use rgb::FromSlice;
 
 const WEBP_GRID: [u8; 6] = [45, 55, 65, 75, 85, 95];
@@ -68,27 +70,53 @@ fn main() {
         std::process::exit(1);
     }
 
-    let formats = [Format::WebP, Format::Jpeg, Format::Avif, Format::Jxl];
-    let jobs: Vec<(Format, u8)> = WEBP_GRID
+    // The anchor first, then JPEG (which has no levels), then each level.
+    let mut columns = vec![
+        ("webp", Format::WebP, Compression::Balanced),
+        ("jpeg", Format::Jpeg, Compression::Balanced),
+    ];
+    for (name, level) in [
+        ("smaller", Compression::Smaller),
+        ("balanced", Compression::Balanced),
+        ("faster", Compression::Faster),
+    ] {
+        for (f, format) in [
+            ("webp", Format::WebP),
+            ("avif", Format::Avif),
+            ("jxl", Format::Jxl),
+        ] {
+            if !(f == "webp" && name == "balanced") {
+                columns.push((leak(format!("{f}/{name}")), format, level));
+            }
+        }
+    }
+    let jobs: Vec<(Format, Compression, u8)> = WEBP_GRID
         .iter()
-        .flat_map(|&q| formats.map(|f| (f, q)))
+        .flat_map(|&q| columns.iter().map(move |&(_, f, l)| (f, l, q)))
         .collect();
-    let means = par_means(&sources, &jobs, |&(format, q), (rgb, png)| {
-        let c = convert(png, &Options::new(format).with_quality(q)).ok()?;
+    let means = par_means(&sources, &jobs, |&(format, level, q), (rgb, png)| {
+        let opts = Options::new(format).with_quality(q).with_compression(level);
+        let c = convert(png, &opts).ok()?;
         let back = to_rgb(&c.bytes)?;
         Some((distance(rgb, &back)?, c.bytes.len() as f64))
     });
 
+    // One line per column: the mean distance at each quality, then the size.
     println!(
-        "quality | webp_dist  webp_KB | jpeg_dist  jpeg_KB | avif_dist  avif_KB | jxl_dist  jxl_KB"
+        "{:<14} {}",
+        "dist",
+        WEBP_GRID.map(|q| format!("{q:>7}")).join("")
     );
-    for (q, row) in WEBP_GRID.iter().zip(means.chunks(formats.len())) {
-        let cells: Vec<String> = row
-            .iter()
-            .map(|(d, kb)| format!("{d:>9.3}  {kb:>7.1}"))
-            .collect();
-        println!("{q:>7} | {}", cells.join(" | "));
+    for (c, (name, ..)) in columns.iter().enumerate() {
+        let row = (0..WEBP_GRID.len()).map(|i| means[i * columns.len() + c]);
+        let d: String = row.clone().map(|(d, _)| format!("{d:>7.3}")).collect();
+        let kb: String = row.map(|(_, kb)| format!("{kb:>7.1}")).collect();
+        println!("{name:<14} {d}   KB {kb}");
     }
+}
+
+fn leak(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
 }
 
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) {

@@ -4,7 +4,7 @@ use image::DynamicImage;
 
 use crate::decode::decode;
 use crate::encode::{self, recompress_jpeg_to_jxl};
-use crate::{Error, Format, Info, inspect};
+use crate::{Cancel, Error, Format, Info, inspect};
 
 /// What to convert to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +19,17 @@ pub struct Options {
     /// Flatten transparency onto this colour (R, G, B); the output then has
     /// no alpha. Needed to convert a transparent image to JPEG.
     pub background: Option<[u8; 3]>,
+    /// Refuse an image with more pixels than this (width × height), read
+    /// from its header before anything is decoded. Conversion time grows
+    /// with the pixel count, so this bounds how long one image can take;
+    /// the always-on decode limits only bound memory.
+    pub max_pixels: Option<u64>,
+    /// Stop the conversion when this token is cancelled or its deadline
+    /// passes.
+    pub cancel: Option<Cancel>,
+    /// How much time the encoder spends on a smaller file. The default is
+    /// [`Compression::Balanced`].
+    pub compression: Compression,
 }
 
 impl Options {
@@ -28,6 +39,9 @@ impl Options {
             format,
             quality: None,
             background: None,
+            max_pixels: None,
+            cancel: None,
+            compression: Compression::Balanced,
         }
     }
 
@@ -43,12 +57,52 @@ impl Options {
         self
     }
 
+    /// Trade encoding time for file size.
+    pub fn with_compression(mut self, compression: Compression) -> Self {
+        self.compression = compression;
+        self
+    }
+
+    /// Refuse images with more than `max` pixels.
+    pub fn with_max_pixels(mut self, max: u64) -> Self {
+        self.max_pixels = Some(max);
+        self
+    }
+
+    /// Stop when `cancel` is cancelled or its deadline passes.
+    pub fn with_cancel(mut self, cancel: Cancel) -> Self {
+        self.cancel = Some(cancel);
+        self
+    }
+
     /// Whether these options can be honoured for some image, checked without
-    /// one: fails with [`Error::InvalidOptions`] for a JPEG or AVIF target
-    /// without a quality, PNG with one, or a quality outside 1–100.
+    /// one: fails with [`Error::InvalidOptions`] for a JPEG target without
+    /// a quality, PNG with one, or a quality outside 1–100.
     pub fn check(&self) -> Result<(), Error> {
         check_options(self).map(|_| ())
     }
+}
+
+/// How much time the encoder spends on a smaller file. It never changes
+/// what the image looks like: the same `quality` gives the same visual
+/// quality at every level (each level has its own calibration), and a
+/// lossless conversion gives the same pixels. Only the file size and the
+/// encoding time differ. Nor does it change the image's width or height.
+///
+/// The levels are relative to each other, not promises: `Smaller` gives a
+/// smaller file than `Balanced` or the same one, `Faster` a quicker encode or
+/// the same one. Where an encoder has nothing to trade, two levels use the
+/// same setting, and JPEG has no setting at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum Compression {
+    /// A smaller file, for a longer encode.
+    Smaller,
+    /// The default.
+    #[default]
+    Balanced,
+    /// A quicker encode, for a larger file.
+    Faster,
 }
 
 /// How the output was encoded.
@@ -154,6 +208,9 @@ pub struct Conversion {
     pub format: Format,
     /// How the output was encoded.
     pub quality: Quality,
+    /// The compression level asked for. JPEG output and the JPEG → JPEG XL
+    /// recompression have no setting it changes.
+    pub compression: Compression,
     /// The input's header facts.
     pub source: Info,
     /// The input's size in bytes.
@@ -168,6 +225,19 @@ pub struct Conversion {
 pub fn convert(input: &[u8], options: &Options) -> Result<Conversion, Error> {
     let target = options.format;
     let quality = check_options(options)?;
+    let cancel = options.cancel.as_ref();
+    let check = || cancel.map_or(Ok(()), Cancel::check);
+    check()?;
+    if let Some(max) = options.max_pixels {
+        let info = inspect(input)?;
+        if u64::from(info.width) * u64::from(info.height) > max {
+            return Err(Error::TooManyPixels {
+                width: info.width,
+                height: info.height,
+                max_pixels: max,
+            });
+        }
+    }
     let mut findings = Vec::new();
 
     if quality == Quality::Lossless
@@ -188,6 +258,7 @@ pub fn convert(input: &[u8], options: &Options) -> Result<Conversion, Error> {
                     bytes,
                     format: target,
                     quality,
+                    compression: options.compression,
                     source,
                     input_size: input.len(),
                     findings: vec![Finding::JpegKept],
@@ -199,6 +270,7 @@ pub fn convert(input: &[u8], options: &Options) -> Result<Conversion, Error> {
     }
 
     let decoded = decode(input)?;
+    check()?;
     let mut img = decoded.image;
 
     if img.color().has_alpha() {
@@ -242,7 +314,15 @@ pub fn convert(input: &[u8], options: &Options) -> Result<Conversion, Error> {
         Quality::Lossless => encode::Mode::Lossless,
         Quality::Lossy(q) => encode::Mode::Lossy(q),
     };
-    let bytes = encode::encode(&img, decoded.icc.as_deref(), target, mode)?;
+    check()?;
+    let bytes = encode::encode(
+        &img,
+        decoded.icc.as_deref(),
+        target,
+        mode,
+        options.compression,
+        cancel,
+    )?;
 
     if let Quality::Lossy(_) = quality {
         findings.push(Finding::LossyEncode);
@@ -255,6 +335,7 @@ pub fn convert(input: &[u8], options: &Options) -> Result<Conversion, Error> {
         bytes,
         format: target,
         quality,
+        compression: options.compression,
         source: decoded.info,
         input_size: input.len(),
         findings,
@@ -637,5 +718,134 @@ mod tests {
         let mut truncated = png(&rgb());
         truncated.truncate(60);
         assert!(convert(&truncated, &Options::new(Format::WebP)).is_err());
+    }
+
+    #[test]
+    fn max_pixels_refuses_from_the_header() {
+        let input = png(&rgb());
+        let (w, h) = (rgb().width(), rgb().height());
+        let px = u64::from(w) * u64::from(h);
+        let opts = Options::new(Format::WebP).with_quality(80);
+        assert!(convert(&input, &opts.clone().with_max_pixels(px)).is_ok());
+        assert_eq!(
+            convert(&input, &opts.with_max_pixels(px - 1)),
+            Err(Error::TooManyPixels {
+                width: w,
+                height: h,
+                max_pixels: px - 1
+            })
+        );
+        // The JPEG -> JPEG XL recompression is held to it too.
+        let jpeg = convert(&input, &Options::new(Format::Jpeg).with_quality(85)).unwrap();
+        assert!(matches!(
+            convert(&jpeg.bytes, &Options::new(Format::Jxl).with_max_pixels(1)),
+            Err(Error::TooManyPixels { .. })
+        ));
+    }
+
+    #[test]
+    fn a_cancelled_conversion_stops() {
+        let input = png(&rgb());
+        let cancel = Cancel::new();
+        cancel.cancel();
+        for format in [
+            Format::WebP,
+            Format::Avif,
+            Format::Jxl,
+            Format::Jpeg,
+            Format::Png,
+        ] {
+            let opts = Options::new(format).with_cancel(cancel.clone());
+            let opts = match format {
+                Format::Png => opts,
+                _ => opts.with_quality(80),
+            };
+            assert_eq!(convert(&input, &opts), Err(Error::Cancelled), "{format}");
+        }
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        {
+            let late = Cancel::after(std::time::Duration::ZERO);
+            let opts = Options::new(Format::Png).with_cancel(late);
+            assert_eq!(convert(&input, &opts), Err(Error::Cancelled));
+        }
+    }
+
+    /// The WebP and AVIF encoders themselves honour the token, not only
+    /// imagoverto's checks around them: a token stopped before the encode
+    /// makes each give up at its first check. (How soon they stop once under
+    /// way is measured, not tested: it depends on the machine.) jxl-encoder
+    /// 0.3.4 takes a token but never checks it.
+    #[test]
+    fn the_encoders_check_the_token() {
+        let img = DynamicImage::ImageRgb8(testimg::gradient_rgb(256, 256));
+        let cancel = Cancel::new();
+        cancel.cancel();
+        for format in [Format::WebP, Format::Avif] {
+            for mode in [encode::Mode::Lossless, encode::Mode::Lossy(80)] {
+                assert_eq!(
+                    encode::encode(
+                        &img,
+                        None,
+                        format,
+                        mode,
+                        Compression::Balanced,
+                        Some(&cancel)
+                    ),
+                    Err(Error::Cancelled),
+                    "{format} {mode:?}"
+                );
+                assert!(
+                    encode::encode(
+                        &img,
+                        None,
+                        format,
+                        mode,
+                        Compression::Balanced,
+                        Some(&Cancel::new())
+                    )
+                    .is_ok()
+                );
+            }
+        }
+    }
+
+    const LEVELS: [Compression; 3] = [
+        Compression::Smaller,
+        Compression::Balanced,
+        Compression::Faster,
+    ];
+
+    /// A level changes the file, never the pixels.
+    #[test]
+    fn every_level_is_lossless() {
+        let gray = DynamicImage::ImageLuma8(testimg::gray_noise(31, 17));
+        for img in [rgb(), rgba(), gray] {
+            let input = png(&img);
+            for format in [Format::WebP, Format::Avif, Format::Jxl, Format::Png] {
+                for level in LEVELS {
+                    let opts = Options::new(format).with_compression(level);
+                    let c = convert(&input, &opts).unwrap();
+                    assert_eq!(c.quality, Quality::Lossless);
+                    assert_eq!(pixels(&c.bytes), img, "{format} {level:?}");
+                }
+            }
+        }
+    }
+
+    /// Every level encodes lossily at about the quality asked for.
+    #[test]
+    fn every_level_keeps_the_quality() {
+        let img = DynamicImage::ImageRgb8(testimg::gradient_rgb(64, 48));
+        let input = png(&img);
+        for format in [Format::WebP, Format::Avif, Format::Jxl, Format::Jpeg] {
+            for level in LEVELS {
+                let opts = Options::new(format)
+                    .with_quality(90)
+                    .with_compression(level);
+                let c = convert(&input, &opts).unwrap();
+                let p = testimg::psnr(&img, &pixels(&c.bytes));
+                assert!(p > 35.0, "{format} {level:?}: PSNR {p:.1}");
+            }
+        }
     }
 }

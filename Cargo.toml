@@ -51,12 +51,16 @@ jxl-encoder = { version = "0.3.4", default-features = false, features = ["jpeg-r
 # 0.2.0 as soon as it is published. Update the rev only deliberately, then
 # re-run the dav1d/libavif tests and the shelf measurement. `imazen` is the
 # feature that carries `with_lossless` (pure Rust, no C).
-zenravif = { git = "https://github.com/imazen/cavif-rs", rev = "52bb0243a418989393c884ab0d1226c356cb2272", default-features = false, features = ["imazen"] }
+zenravif = { git = "https://github.com/imazen/cavif-rs", rev = "52bb0243a418989393c884ab0d1226c356cb2272", default-features = false, features = ["imazen", "stop"] }
 # AVIF decode: the container with zenavif-parse, the AV1 data with rav1d-safe.
 # 0.6.0 is the first rav1d-safe that matches dav1d byte for byte (epublift,
 # 0/480 frames differ, 0/9 hangs, 2026-10-29). Baris's decision, 2026-10-29.
 zenavif-parse = "0.6.2"
 rav1d-safe = "0.6.0"
+# Cancellation: the trait the codecs check (`Cancel` implements it) and the
+# token zenravif takes it as.
+enough = "0.4.5"
+almost-enough = { version = "0.4.5", default-features = false, features = ["alloc"] }
 # The pixel-buffer types zenravif's encoder takes.
 imgref = "1.12.0"
 rgb = "0.8.52"

@@ -498,7 +498,9 @@ dependencies = [
 name = "imagoverto"
 version = "0.0.0"
 dependencies = [
+ "almost-enough",
  "butteraugli",
+ "enough",
  "image",
  "imgref",
  "jxl-encoder",
@@ -1630,6 +1632,7 @@ dependencies = [
  "bitstream-io",
  "built",
  "cfg-if",
+ "enough",
  "interpolate_name",
  "itertools",
  "libfuzzer-sys",
@@ -1654,6 +1657,7 @@ name = "zenravif"
 version = "0.2.0"
 source = "git+https://github.com/imazen/cavif-rs?rev=52bb0243a418989393c884ab0d1226c356cb2272#52bb0243a418989393c884ab0d1226c356cb2272"
 dependencies = [
+ "almost-enough",
  "imgref",
  "loop9",
  "quick-error",
