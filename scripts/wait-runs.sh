@@ -10,7 +10,7 @@
 # Publish to npm (the tag). A plain push to main carries two.
 
 set -euo pipefail
-SHA=$(git rev-parse "${1:?usage: scripts/wait-runs.sh <commit> [expected-runs] [timeout-seconds]}")
+SHA=$(git rev-parse "${1:?usage: scripts/wait-runs.sh <commit> [expected-runs] [timeout-seconds]}^{commit}")
 N="${2:-5}"
 LIMIT="${3:-1800}"
 REPO=veripublica/imagoverto
