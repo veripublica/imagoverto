@@ -1,0 +1,400 @@
+<!doctype html>
+<!-- family-web template v7 (family-web v0.7.2) -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>imagoverto — convert images to WebP, JPEG XL, JPEG or PNG, in your browser</title>
+    <link rel="stylesheet" href="./tokens.css" />
+    <link rel="stylesheet" href="./demo.css" />
+    <script>
+      // Theme, part 1 of 2: before the first paint, so a stored choice never
+      // flashes. See family-web's skeleton.html.
+      try {
+        if (CSS.supports("color", "light-dark(#000,#fff)")) {
+          const t = localStorage.getItem("theme");
+          if (t === "dark" || t === "light") document.documentElement.dataset.theme = t;
+        }
+      } catch {}
+    </script>
+    <style>
+      .actionbar { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin: 1rem 0; }
+      td.num { font-variant-numeric: tabular-nums; }
+      .preview { display: block; max-width: 100%; height: auto; margin: 1rem 0; border: 1px solid var(--border); border-radius: 8px; }
+      .note { color: var(--muted); font-size: .85rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="topbar">
+        <h1>imagoverto</h1>
+        <button class="theme-toggle" id="theme" type="button"></button>
+        <script>
+          (() => {
+            const root = document.documentElement;
+            const btn = document.getElementById("theme");
+            const cycle = ["auto", "dark", "light"];
+            const label = { auto: "◐ auto", dark: "☾ dark", light: "☀ light" };
+            const save = (v) => {
+              try {
+                v ? localStorage.setItem("theme", v) : localStorage.removeItem("theme");
+              } catch {}
+            };
+            const current = () => root.dataset.theme || "auto";
+            const paint = () => {
+              btn.textContent = label[current()];
+              btn.title = "Theme: " + current() + " — click to change";
+            };
+            btn.addEventListener("click", () => {
+              const next = cycle[(cycle.indexOf(current()) + 1) % cycle.length];
+              if (next === "auto") delete root.dataset.theme;
+              else root.dataset.theme = next;
+              save(next === "auto" ? null : next);
+              paint();
+            });
+            paint();
+          })();
+        </script>
+      </div>
+      <p class="sub">Converts a still image to WebP, JPEG XL, JPEG or PNG, in pure Rust, entirely in your browser — no upload, no server. Your file never leaves this page.</p>
+
+      <div class="viewopts">
+        <label for="format">Format</label>
+        <select id="format">
+          <option value="webp">WebP</option>
+          <option value="jxl">JPEG XL</option>
+          <option value="jpeg">JPEG</option>
+          <option value="png">PNG</option>
+          <option value="avif" disabled>AVIF (read only, for now)</option>
+        </select>
+        <label for="quality">Quality</label>
+        <select id="quality">
+          <option value="">Lossless</option>
+          <option>95</option>
+          <option>90</option>
+          <option>85</option>
+          <option selected>80</option>
+          <option>75</option>
+          <option>70</option>
+          <option>60</option>
+          <option>50</option>
+        </select>
+        <label for="compression">Compression</label>
+        <select id="compression">
+          <option value="smaller">Smaller file</option>
+          <option value="balanced" selected>Balanced</option>
+          <option value="faster">Faster</option>
+        </select>
+        <label for="background">Transparency</label>
+        <select id="background">
+          <option value="">Keep</option>
+          <option value="white">On white</option>
+          <option value="black">On black</option>
+        </select>
+      </div>
+      <p class="note" id="hint"></p>
+
+      <label class="drop" id="drop">
+        <input type="file" id="file" accept=".jpg,.jpeg,.png,.webp,.jxl,.avif,image/jpeg,image/png,image/webp,image/jxl,image/avif" />
+        Drop an image here (<strong>JPEG, PNG, WebP, JPEG XL or AVIF</strong>), or click to choose one.
+      </label>
+
+      <p class="status" id="status">Loading the converter…</p>
+
+      <section id="result" hidden>
+        <table>
+          <thead>
+            <tr><th></th><th>Format</th><th>Size</th><th>Encoding</th></tr>
+          </thead>
+          <tbody>
+            <tr><th>Before</th><td id="in-format"></td><td class="num" id="in-size"></td><td id="in-enc"></td></tr>
+            <tr><th>After</th><td id="out-format"></td><td class="num" id="out-size"></td><td id="out-enc"></td></tr>
+          </tbody>
+        </table>
+        <table id="findings">
+          <thead>
+            <tr><th>Code</th><th>Severity</th><th>What the conversion did</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="actionbar">
+          <button class="primary" id="download" type="button">Download</button>
+          <span class="note" id="name"></span>
+        </div>
+        <img class="preview" id="preview" alt="The converted image" hidden />
+        <p class="note" id="nopreview" hidden>This browser cannot show the converted file; the download is the image.</p>
+      </section>
+
+      <footer>
+        Built with <code>wasm-pack</code> from the <code>imagoverto-wasm</code> crate. <span id="ver"></span>
+        <nav class="family">
+          A <a href="https://github.com/veripublica">veripublica</a> tool ·
+          <span id="family-tools">
+            <a href="https://github.com/veripublica/epubveri">epubveri</a>
+            <a href="https://github.com/veripublica/epubsana">epubsana</a>
+            <a href="https://github.com/veripublica/kepubverto">kepubverto</a>
+            <a href="https://github.com/veripublica/paginaverto">paginaverto</a>
+            <a href="https://github.com/veripublica/imagoverto" aria-current="page">imagoverto</a>
+            <a href="https://github.com/ePubLift/epublift">epublift</a>
+          </span>
+        </nav>
+        <script>
+          // Family nav: the current list, without a release in every tool (#2).
+          //
+          // What is shared is DATA, not code. nav.json is read as JSON and turned
+          // into links with createElement/textContent; nothing from it is ever
+          // parsed as HTML or run. A bad entry is skipped, a bad file or a failed
+          // fetch leaves the fallback list above exactly as it was.
+          //
+          // Same host as the live demos (veripublica.github.io), so no third party
+          // is involved, and the request carries nothing from the page: not the
+          // reader's file, not a result. The no-upload promise above still holds.
+          (() => {
+            const box = document.getElementById("family-tools");
+            // This tool = the fallback's aria-current link, matched by name OR URL,
+            // so renaming either one in nav.json keeps "you are here" (#16).
+            const mark = box.querySelector('a[aria-current="page"]');
+            const here = { name: mark?.textContent.trim(), url: mark?.getAttribute("href") };
+            fetch("https://veripublica.github.io/family-web/nav.json")
+              .then((r) => (r.ok ? r.json() : null))
+              .then((data) => {
+                // GitHub only. Which repositories may appear is checked in family-web
+                // (check-nav.mjs, #13); the page holds just the host, so a new
+                // exception there never means a re-copy here.
+                const tools = (Array.isArray(data?.tools) ? data.tools : []).filter(
+                  (t) => typeof t?.name === "string" && /^https:\/\/github\.com\/[^\s]+$/.test(t?.url ?? ""),
+                );
+                if (!tools.length) return;
+                const key = (list) => list.map((t) => t.name + " " + t.url).join("\n");
+                const shown = [...box.querySelectorAll("a")].map((a) => ({
+                  name: a.textContent.trim(),
+                  url: a.getAttribute("href"),
+                }));
+                if (key(tools) === key(shown)) return; // already current: leave focus alone
+                box.replaceChildren(
+                  ...tools.flatMap((t) => {
+                    const a = document.createElement("a");
+                    a.href = t.url;
+                    a.textContent = t.name;
+                    if (t.name === here.name || t.url === here.url) a.setAttribute("aria-current", "page");
+                    return [a, " "];
+                  }),
+                );
+              })
+              .catch(() => {});
+          })();
+        </script>
+      </footer>
+    </main>
+
+    <script type="module">
+      // The conversion runs in a worker: a large image never freezes the page,
+      // a crash inside the WebAssembly (a panic cannot be caught there) costs
+      // the worker, not the page, and a conversion still running when the
+      // reader asks for another is stopped by ending its worker.
+      const pkg = new URL("../pkg/imagoverto_wasm.js", import.meta.url).href;
+      const workerUrl = new URL("./worker.js", import.meta.url);
+
+      const $ = (id) => document.getElementById(id);
+      const statusEl = $("status");
+      const dropEl = $("drop");
+      const fileEl = $("file");
+      const resultEl = $("result");
+      const controls = ["format", "quality", "compression", "background"].map($);
+
+      let worker = null;
+      let loading = null; // the start() of the current worker
+      let busy = false;
+      let file = null; // the image last chosen; a changed option converts it again
+      let out = null; // { blob, name }
+      let previewUrl = null;
+
+      const names = { webp: "WebP", avif: "AVIF", jxl: "JPEG XL", jpeg: "JPEG", png: "PNG" };
+
+      function start() {
+        worker = new Worker(workerUrl, { type: "module" });
+        loading = call({ type: "init", pkg });
+        return loading;
+      }
+
+      function call(msg, transfer = []) {
+        return new Promise((resolve, reject) => {
+          worker.onmessage = (e) => (e.data.ok ? resolve(e.data) : reject(e.data));
+          worker.onerror = (e) => {
+            e.preventDefault();
+            reject({ kind: "Internal", message: e.message || "the converter stopped" });
+          };
+          worker.postMessage(msg, transfer);
+        });
+      }
+
+      // Plain words for the reader. The library's own message follows for the
+      // kinds where it adds something.
+      const explain = {
+        Unrecognized: "This is not a JPEG, PNG, WebP, JPEG XL or AVIF image.",
+        Animated: "This image is animated; only still images are converted.",
+        TooLarge: "This image is too large to convert here.",
+        Internal: "The converter failed on this image. Please report it, if you can share the file.",
+      };
+
+      const kb = (n) => (n < 1024 ? n + " B" : (n / 1024).toFixed(n < 10240 ? 1 : 0) + " KB");
+
+      function options() {
+        const [format, quality, compression, background] = controls.map((c) => c.value);
+        const o = { format, compression };
+        if (quality) o.quality = Number(quality);
+        if (background) o.background = background;
+        return o;
+      }
+
+      function hint() {
+        const { format, quality } = options();
+        $("quality").disabled = format === "png";
+        $("compression").disabled = format === "jpeg";
+        $("hint").textContent =
+          format === "png" ? "PNG is always lossless." :
+          format === "jpeg" && !quality ? "JPEG has no lossless mode: choose a quality." :
+          !quality ? "Lossless: the new file decodes to exactly the same pixels. From a JPEG to JPEG XL, the original JPEG is kept inside." :
+          "Quality is one scale across formats, calibrated against WebP.";
+      }
+
+      function show(r) {
+        $("in-format").textContent = names[r.source.format] + " · " + r.source.width + "×" + r.source.height;
+        $("in-size").textContent = kb(r.inputSize);
+        $("in-enc").textContent =
+          r.source.lossless === true ? "lossless" :
+          r.source.jpegQuality ? "quality " + r.source.jpegQuality + " (libjpeg scale)" :
+          r.source.lossless === false ? "lossy" : "";
+        $("out-format").textContent = names[r.format];
+        const change = Math.round((r.outputSize / r.inputSize - 1) * 100);
+        $("out-size").textContent = kb(r.outputSize) + " (" + (change > 0 ? "+" : "") + change + "%)";
+        $("out-enc").textContent =
+          (r.quality === "lossless" ? "lossless" : "quality " + r.quality) +
+          (r.compression === "balanced" ? "" : ", " + r.compression);
+        const body = $("findings").tBodies[0];
+        body.replaceChildren(
+          ...r.findings.map((f) => {
+            const tr = document.createElement("tr");
+            const code = document.createElement("td");
+            code.innerHTML = "<code></code>";
+            code.firstChild.textContent = f.code;
+            const sev = document.createElement("td");
+            sev.className = "sev " + f.severity;
+            sev.textContent = f.severity;
+            const msg = document.createElement("td");
+            msg.textContent = f.message;
+            tr.append(code, sev, msg);
+            return tr;
+          }),
+        );
+        $("findings").hidden = r.findings.length === 0;
+
+        const stem = file.name.replace(/\.[^.]+$/, "") || "image";
+        const ext = r.ext === file.name.split(".").pop()?.toLowerCase() ? "_converted." + r.ext : "." + r.ext;
+        out = { blob: new Blob([r.data], { type: r.mediaType }), name: stem + ext };
+        $("name").textContent = out.name;
+
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        previewUrl = URL.createObjectURL(out.blob);
+        const img = $("preview");
+        img.hidden = false;
+        $("nopreview").hidden = true;
+        img.onerror = () => {
+          img.hidden = true;
+          $("nopreview").hidden = false;
+        };
+        img.src = previewUrl;
+        resultEl.hidden = false;
+      }
+
+      async function run() {
+        if (!file || !worker) return;
+        hint();
+        const opts = options();
+        if (opts.format === "jpeg" && !opts.quality) {
+          resultEl.hidden = true;
+          statusEl.textContent = "Choose a quality to convert to JPEG.";
+          return;
+        }
+        if (opts.format === "png") delete opts.quality;
+        if (opts.format === "jpeg") delete opts.compression;
+        if (busy) {
+          // Stop the conversion under way: a worker can be ended at any point.
+          worker.terminate();
+          start().catch(() => {});
+        }
+        busy = true;
+        const mine = file;
+        resultEl.hidden = true;
+        statusEl.textContent = "Converting " + mine.name + " to " + names[opts.format] + "…";
+        const t0 = performance.now();
+        try {
+          await loading;
+          const bytes = new Uint8Array(await mine.arrayBuffer());
+          const r = await call({ type: "convert", bytes, options: opts }, [bytes.buffer]);
+          const s = ((performance.now() - t0) / 1000).toFixed(1);
+          statusEl.textContent = mine.name + " — converted in " + s + " s.";
+          show(r.result);
+          busy = false;
+        } catch (e) {
+          busy = false;
+          const kind = e?.kind ?? "Internal";
+          const plain = explain[kind];
+          statusEl.textContent = mine.name + ": " + (plain ? plain + "\n" + (e?.message ?? "") : e?.message ?? String(e));
+          if (kind === "Internal") {
+            worker.terminate();
+            start().catch(() => {});
+          }
+        }
+      }
+
+      $("download").addEventListener("click", () => {
+        if (!out) return;
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(out.blob);
+        a.download = out.name;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      });
+
+      controls.forEach((c) => c.addEventListener("change", () => (file ? run() : hint())));
+      hint();
+
+      start()
+        .then((r) => {
+          statusEl.textContent = "Ready. Choose the format, then drop an image.";
+          $("ver").textContent = "imagoverto-wasm v" + r.version;
+        })
+        .catch((e) => {
+          worker = null;
+          statusEl.textContent = "Failed to load: " + (e?.message ?? e);
+        });
+
+      fileEl.addEventListener("change", () => {
+        if (fileEl.files.length) {
+          file = fileEl.files[0];
+          run();
+        }
+      });
+      ["dragenter", "dragover"].forEach((ev) =>
+        dropEl.addEventListener(ev, (e) => {
+          e.preventDefault();
+          dropEl.classList.add("over");
+        }),
+      );
+      ["dragleave", "drop"].forEach((ev) =>
+        dropEl.addEventListener(ev, (e) => {
+          e.preventDefault();
+          dropEl.classList.remove("over");
+        }),
+      );
+      dropEl.addEventListener("drop", (e) => {
+        const f = e.dataTransfer?.files?.[0];
+        if (f) {
+          file = f;
+          run();
+        }
+      });
+    </script>
+  </body>
+</html>

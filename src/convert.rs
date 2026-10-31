@@ -76,8 +76,9 @@ impl Options {
     }
 
     /// Whether these options can be honoured for some image, checked without
-    /// one: fails with [`Error::InvalidOptions`] for a JPEG target without
-    /// a quality, PNG with one, or a quality outside 1–100.
+    /// one: fails with [`Error::InvalidOptions`] for an AVIF target (not
+    /// written in this release), a JPEG target without a quality, PNG with
+    /// one, or a quality outside 1–100.
     pub fn check(&self) -> Result<(), Error> {
         check_options(self).map(|_| ())
     }
@@ -349,6 +350,10 @@ fn check_options(options: &Options) -> Result<Quality, Error> {
         })
     };
     match (options.format, options.quality) {
+        (Format::Avif, _) => invalid(
+            "AVIF output is not available in this release, because its encoder \
+             (zenravif 0.2) is not on crates.io yet; AVIF input is read",
+        ),
         (Format::Jpeg, None) => {
             invalid("JPEG has no lossless mode; give a quality (1-100) to convert to JPEG")
         }
@@ -508,37 +513,18 @@ mod tests {
         dir.join(name)
     }
 
-    /// Lossless AVIF is exact, read back by our decoder and by libavif's
-    /// avifdec (when installed): colour, colour under transparent pixels,
-    /// gray (monochrome) and gray noise, the image zenravif 0.1.3 got wrong.
+    /// AVIF is read but not written in this release, whatever the image.
     #[test]
-    fn lossless_avif_is_exact() {
-        let gray_alpha = DynamicImage::ImageLumaA8(rgba().to_luma_alpha8());
-        let cases = [
-            rgb(),
-            rgba(),
-            DynamicImage::ImageLuma8(testimg::gray_noise(64, 48)),
-            gray_alpha,
-        ];
-        for (i, src) in cases.into_iter().enumerate() {
-            let c = convert(&png(&src), &Options::new(Format::Avif)).unwrap();
-            assert_eq!(c.quality, Quality::Lossless);
-            assert!(c.findings.is_empty(), "{:?}: {:?}", src.color(), c.findings);
-            assert_eq!(pixels(&c.bytes), src, "ours, {:?}", src.color());
-            if cfg!(target_family = "wasm") {
-                continue; // no temp dir, no processes
-            }
-            let (avif, out) = (tmp(&format!("ll{i}.avif")), tmp(&format!("ll{i}.png")));
-            std::fs::write(&avif, &c.bytes).unwrap();
-            if run("avifdec", &[&avif, &out]).is_some() {
-                let theirs = image::open(&out).unwrap();
-                assert_eq!(
-                    theirs.to_rgba8(),
-                    src.to_rgba8(),
-                    "avifdec, {:?}",
-                    src.color()
-                );
-            }
+    fn avif_output_is_refused() {
+        for opts in [
+            Options::new(Format::Avif),
+            Options::new(Format::Avif).with_quality(80),
+        ] {
+            assert!(matches!(opts.check(), Err(Error::InvalidOptions { .. })));
+            assert!(matches!(
+                convert(&png(&rgb()), &opts),
+                Err(Error::InvalidOptions { .. })
+            ));
         }
     }
 
@@ -639,7 +625,7 @@ mod tests {
         let gray = DynamicImage::ImageLuma8(rgb().to_luma8());
         let gray_alpha = DynamicImage::ImageLumaA8(rgba().to_luma_alpha8());
         for src in [gray, gray_alpha] {
-            for target in [Format::WebP, Format::Avif, Format::Jxl, Format::Jpeg] {
+            for target in [Format::WebP, Format::Jxl, Format::Jpeg] {
                 let opts = Options::new(target)
                     .with_quality(90)
                     .with_background([255; 3]);
@@ -748,13 +734,7 @@ mod tests {
         let input = png(&rgb());
         let cancel = Cancel::new();
         cancel.cancel();
-        for format in [
-            Format::WebP,
-            Format::Avif,
-            Format::Jxl,
-            Format::Jpeg,
-            Format::Png,
-        ] {
+        for format in [Format::WebP, Format::Jxl, Format::Jpeg, Format::Png] {
             let opts = Options::new(format).with_cancel(cancel.clone());
             let opts = match format {
                 Format::Png => opts,
@@ -770,42 +750,24 @@ mod tests {
         }
     }
 
-    /// The WebP and AVIF encoders themselves honour the token, not only
-    /// imagoverto's checks around them: a token stopped before the encode
-    /// makes each give up at its first check. (How soon they stop once under
-    /// way is measured, not tested: it depends on the machine.) jxl-encoder
+    /// The WebP encoder itself honours the token, not only imagoverto's
+    /// checks around it: a token stopped before the encode makes it give up
+    /// at its first check. (How soon it stops once under way is measured,
+    /// not tested: it depends on the machine.) jxl-encoder
     /// 0.3.4 takes a token but never checks it.
     #[test]
     fn the_encoders_check_the_token() {
         let img = DynamicImage::ImageRgb8(testimg::gradient_rgb(256, 256));
         let cancel = Cancel::new();
         cancel.cancel();
-        for format in [Format::WebP, Format::Avif] {
-            for mode in [encode::Mode::Lossless, encode::Mode::Lossy(80)] {
-                assert_eq!(
-                    encode::encode(
-                        &img,
-                        None,
-                        format,
-                        mode,
-                        Compression::Balanced,
-                        Some(&cancel)
-                    ),
-                    Err(Error::Cancelled),
-                    "{format} {mode:?}"
-                );
-                assert!(
-                    encode::encode(
-                        &img,
-                        None,
-                        format,
-                        mode,
-                        Compression::Balanced,
-                        Some(&Cancel::new())
-                    )
-                    .is_ok()
-                );
-            }
+        // JPEG XL joins once jxl-encoder checks the token (0.4.0).
+        let format = Format::WebP;
+        for mode in [encode::Mode::Lossless, encode::Mode::Lossy(80)] {
+            let with = |c: &Cancel| {
+                encode::encode(&img, None, format, mode, Compression::Balanced, Some(c))
+            };
+            assert_eq!(with(&cancel), Err(Error::Cancelled), "{format} {mode:?}");
+            assert!(with(&Cancel::new()).is_ok());
         }
     }
 
@@ -821,7 +783,7 @@ mod tests {
         let gray = DynamicImage::ImageLuma8(testimg::gray_noise(31, 17));
         for img in [rgb(), rgba(), gray] {
             let input = png(&img);
-            for format in [Format::WebP, Format::Avif, Format::Jxl, Format::Png] {
+            for format in [Format::WebP, Format::Jxl, Format::Png] {
                 for level in LEVELS {
                     let opts = Options::new(format).with_compression(level);
                     let c = convert(&input, &opts).unwrap();
@@ -837,7 +799,7 @@ mod tests {
     fn every_level_keeps_the_quality() {
         let img = DynamicImage::ImageRgb8(testimg::gradient_rgb(64, 48));
         let input = png(&img);
-        for format in [Format::WebP, Format::Avif, Format::Jxl, Format::Jpeg] {
+        for format in [Format::WebP, Format::Jxl, Format::Jpeg] {
             for level in LEVELS {
                 let opts = Options::new(format)
                     .with_quality(90)

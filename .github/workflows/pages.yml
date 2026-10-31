@@ -1,0 +1,84 @@
+name: Deploy the web page to GitHub Pages
+
+# Builds imagoverto-wasm (--target web) and deploys its demo/ with the fresh
+# pkg/ to GitHub Pages: convert an image in the browser, nothing installed,
+# nothing uploaded. Runs on every push to main so the page follows the code;
+# workflow_dispatch allows a manual re-deploy. Same shape as kepubverto's
+# pages.yml.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      # Pinned and checked, the same binary publish-npm.yml installs. Bump
+      # both together.
+      - name: Install wasm-pack
+        env:
+          WASM_PACK: v0.15.0
+          WASM_PACK_SHA256: c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a
+        run: |
+          set -euo pipefail
+          name="wasm-pack-$WASM_PACK-x86_64-unknown-linux-musl"
+          curl -sSfL -o wasm-pack.tar.gz \
+            "https://github.com/wasm-bindgen/wasm-pack/releases/download/$WASM_PACK/$name.tar.gz"
+          echo "$WASM_PACK_SHA256  wasm-pack.tar.gz" | sha256sum -c -
+          tar xzf wasm-pack.tar.gz
+          install "$name/wasm-pack" "$HOME/.cargo/bin/wasm-pack"
+          rm -rf wasm-pack.tar.gz "$name"
+          wasm-pack --version
+
+      - name: Build imagoverto-wasm (web target)
+        run: wasm-pack build imagoverto-wasm --target web --no-pack
+
+      - name: Assemble Pages site
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp -r imagoverto-wasm/demo site/demo
+          cp -r imagoverto-wasm/pkg site/pkg
+          rm -f site/pkg/.gitignore
+          # Land the demo at the site root too, so the root URL works without
+          # needing /demo/. The demo's import path ("../pkg/…") only resolves
+          # one level down, so rewrite it to "./pkg/…" for the root copy — a
+          # bare "pkg/…" is not a valid ES module specifier.
+          sed 's#\.\./pkg/#./pkg/#' imagoverto-wasm/demo/index.html > site/index.html
+          # The root copy's stylesheets and worker are relative too
+          # ("./tokens.css", "./worker.js"), and they live beside the demo — so
+          # the root needs its own copies or it renders unstyled and converts
+          # nothing.
+          cp imagoverto-wasm/demo/tokens.css imagoverto-wasm/demo/demo.css imagoverto-wasm/demo/worker.js site/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

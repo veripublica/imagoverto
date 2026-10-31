@@ -7,17 +7,22 @@ imagoverto is pre-1.0, so breaking changes land as minor-version bumps
 (`0.x.0`), per [Cargo's SemVer compatibility
 rules](https://doc.rust-lang.org/cargo/reference/semver.html).
 
-## [Unreleased]
+## [0.1.0] - 2026-10-31
 
-Nothing is released yet. The first release, 0.1.0, will contain:
+The first release. It reads all five formats and writes four: **AVIF output
+is not in this release**, because the only AVIF encoder imagoverto trusts
+(zenravif) has its fixes only on git so far, and crates.io takes no git
+dependency. It returns once zenravif 0.2.0 is published.
 
 ### Added
 
-- **`convert`:** one image in, one image out, between WebP, AVIF, JPEG XL,
-  JPEG and PNG, with the facts about the result: sizes, the quality used or
-  `lossless`, and findings such as transparency flattened onto a background.
-- **Lossless without a quality.** Without a quality, WebP, AVIF, JPEG XL and
-  PNG are written lossless, and JPEG → JPEG XL keeps the original JPEG,
+- **`convert`:** one image in, one image out. It reads WebP, AVIF, JPEG XL,
+  JPEG and PNG, and writes WebP, JPEG XL, JPEG and PNG. It reports the facts
+  about the result: sizes, the quality used or `lossless`, and findings such
+  as transparency flattened onto a background. Asking for AVIF output is
+  refused (`Error::InvalidOptions`; exit 2 on the command line).
+- **Lossless without a quality.** Without a quality, WebP, JPEG XL and PNG
+  are written lossless, and JPEG → JPEG XL keeps the original JPEG,
   restorable bit for bit.
 - **One quality scale.** A quality of 1–100 means the same across formats. It
   was calibrated with butteraugli against WebP on 60 photos and 60 drawings
@@ -41,15 +46,18 @@ Nothing is released yet. The first release, 0.1.0, will contain:
   under way, from another thread or by a deadline.
 - **Command-line tool** (feature `cli`, on by default):
   - `convert` (the default subcommand) and `inspect`;
-  - `--format json` in the veripublica family's report format.
+  - `--format json` in the veripublica family's report format;
+  - binaries for Linux (glibc and musl), macOS and Windows, x86_64 and
+    ARM64, with `SHA256SUMS.txt` and a build provenance attestation.
+- **In the browser:** the npm package `@veripublica/imagoverto-wasm`
+  (`convert`, `inspect`, `version`, with TypeScript types), and a web page
+  that converts an image without uploading it.
 - **Platforms:** the library builds for `wasm32-unknown-unknown` and is
   tested on `wasm32-wasip1`.
 
 ### Known limitations
 
-- **AVIF encoder from git:** imagoverto takes `zenravif` from git, pinned,
-  until 0.2.0 is on crates.io. A project that depends on imagoverto needs
-  the `[patch.crates-io]` line from the README.
+- **No AVIF output** until zenravif 0.2.0 is on crates.io (above).
 - **JPEG XL cancellation:** the JPEG XL encoder (jxl-encoder 0.3.4) does not
   check the cancellation token yet. A started JPEG XL encode runs to its end.
 - **AVIF lossless flag:** `inspect` cannot yet tell whether an AVIF is

@@ -26,23 +26,62 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Lint (clippy, warnings denied)
-        run: cargo clippy --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       # Broken intra-doc links and bare URLs show up only as rustdoc warnings,
       # so warnings are denied (the family's gate).
       - name: Docs (rustdoc, warnings denied)
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --no-deps --locked
+        run: cargo doc --workspace --no-deps --locked
 
-      # The browser estimator is a named need (starting brief, 2026-10-29), so
-      # the library must keep compiling to WebAssembly from the first commit.
+      # The browser build (imagoverto-wasm, the web page and the npm package)
+      # stands on this.
       - name: Build lib for wasm32
         run: cargo build --lib --target wasm32-unknown-unknown --locked
 
       # What a library user (epublift, a wasm binding) builds: no CLI, no serde.
       - name: Build lib without default features
         run: cargo check --lib --no-default-features --locked
+
+      # What crates.io will receive, built from the packaged files alone: a
+      # git dependency, or a file missing from `include`, fails here, not on
+      # the release tag.
+      - name: Package for crates.io (dry run)
+        run: cargo publish --dry-run --locked
+
+  # The npm package and the web page: wasm-pack builds imagoverto-wasm as
+  # publish-npm.yml and pages.yml do.
+  wasm-pack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      # Pinned and checked, the same binary kepubverto installs.
+      - name: Install wasm-pack
+        env:
+          WASM_PACK: v0.15.0
+          WASM_PACK_SHA256: c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a
+        run: |
+          set -euo pipefail
+          name="wasm-pack-$WASM_PACK-x86_64-unknown-linux-musl"
+          curl -sSfL -o wasm-pack.tar.gz \
+            "https://github.com/wasm-bindgen/wasm-pack/releases/download/$WASM_PACK/$name.tar.gz"
+          echo "$WASM_PACK_SHA256  wasm-pack.tar.gz" | sha256sum -c -
+          tar xzf wasm-pack.tar.gz
+          install "$name/wasm-pack" "$HOME/.cargo/bin/wasm-pack"
+          rm -rf wasm-pack.tar.gz "$name"
+          wasm-pack --version
+
+      - name: Build imagoverto-wasm (bundler, as npm gets it)
+        run: wasm-pack build imagoverto-wasm --target bundler --scope veripublica
+
+      - name: Build imagoverto-wasm (web, as the page gets it)
+        run: wasm-pack build imagoverto-wasm --target web --no-pack --out-dir pkg-web
 
   # The codecs carry per-architecture SIMD paths, and the AVIF decoder's
   # faults were architecture-dependent (imazen/zenavif#78, aarch64). So the
@@ -65,7 +104,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y dav1d libjxl-tools libavif-bin
 
       - name: Test
-        run: cargo test --locked
+        run: cargo test --workspace --locked
 
   # Compiling to wasm32 is not running on it: the codecs' SIMD and threading
   # paths differ there. So the tests also run on wasm32-wasip1 under

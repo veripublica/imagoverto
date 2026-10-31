@@ -1,18 +1,26 @@
 [package]
 name = "imagoverto"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 # The floor of the imazen codecs (zenwebp, zenjxl, zenravif, zenavif-parse).
 rust-version = "1.93"
-description = "Converts still images between WebP, AVIF, JPEG XL, JPEG and PNG, in pure Rust."
+description = "Converts still images to WebP, JPEG XL, JPEG and PNG, and reads AVIF, in pure Rust."
 license = "AGPL-3.0-only"
 repository = "https://github.com/veripublica/imagoverto"
 homepage = "https://github.com/veripublica/imagoverto"
 readme = "README.md"
 keywords = ["image", "webp", "avif", "jpeg-xl", "converter"]
 categories = ["multimedia::images", "command-line-utilities"]
-# Nothing is released until it is stable (Baris, 2026-10-29).
-publish = false
+# Released early to hold the name on crates.io and npm (Baris, 2026-10-31);
+# 0.x, and AVIF output waits for zenravif 0.2.0. Only what builds the crate
+# goes into the package.
+include = ["/src", "/build.rs", "/Cargo.toml", "/LICENSE", "/LICENSING.md", "/README.md", "/CHANGELOG.md"]
+
+# The WASM/JS boundary lives in a separate workspace member, so its
+# wasm-bindgen deps never reach this crate (kepubverto's pattern). It reuses
+# the library; it adds no conversion logic.
+[workspace]
+members = ["imagoverto-wasm"]
 
 [features]
 default = ["cli"]
@@ -39,31 +47,13 @@ zenjxl = { version = "0.2.1", default-features = false, features = ["encode", "d
 # that a decoder can turn back into the original JPEG, byte for byte. zenjxl
 # does not expose it. Same version zenjxl resolves.
 jxl-encoder = { version = "0.3.4", default-features = false, features = ["jpeg-reencoding"] }
-# AVIF encode. Called directly rather than through zenavif: zenavif always
-# depends on rav1d-safe, and its newest release (0.1.6) pins the 0.5 line,
-# whose decoder hangs and mis-decodes (imazen/zenavif#78). No default
-# features: `asm` needs nasm, and the family builds with no C toolchain.
-#
-# Temporarily from git, pinned (Baris, 2026-10-30): zenravif 0.1.3 on crates.io
-# writes visibly corrupt lossy AVIF on some real images (9/120 shelf images),
-# its lossless mode is lossy, and its premultiplied alpha is broken; main
-# (0.2.0 on zenrav1e 0.2.0) fixes all three (0/120). Move to the crates.io
-# 0.2.0 as soon as it is published. Update the rev only deliberately, then
-# re-run the dav1d/libavif tests and the shelf measurement. `imazen` is the
-# feature that carries `with_lossless` (pure Rust, no C).
-zenravif = { git = "https://github.com/imazen/cavif-rs", rev = "52bb0243a418989393c884ab0d1226c356cb2272", default-features = false, features = ["imazen", "stop"] }
 # AVIF decode: the container with zenavif-parse, the AV1 data with rav1d-safe.
 # 0.6.0 is the first rav1d-safe that matches dav1d byte for byte (epublift,
 # 0/480 frames differ, 0/9 hangs, 2026-10-29). Baris's decision, 2026-10-29.
 zenavif-parse = "0.6.2"
 rav1d-safe = "0.6.0"
-# Cancellation: the trait the codecs check (`Cancel` implements it) and the
-# token zenravif takes it as.
+# Cancellation: the trait the codecs check (`Cancel` implements it).
 enough = "0.4.5"
-almost-enough = { version = "0.4.5", default-features = false, features = ["alloc"] }
-# The pixel-buffer types zenravif's encoder takes.
-imgref = "1.12.0"
-rgb = "0.8.52"
 # ICC profiles for AVIF images described by CICP (Display P3, BT.2020);
 # `image` already depends on it.
 moxcms = "0.8.1"
@@ -73,9 +63,31 @@ zenpixels = "0.2.16"
 [dev-dependencies]
 # The calibration tool (examples/calibrate.rs) only; never shipped.
 butteraugli = "0.9.3"
+# The pixel-buffer types zenravif and butteraugli take.
+imgref = "1.12.0"
+rgb = "0.8.52"
+# AVIF encode, for the AVIF decoder's tests only: this release writes no
+# AVIF. zenravif 0.1.3 on crates.io writes visibly corrupt lossy AVIF on some
+# real images (9/120 shelf images), its lossless mode is lossy, and its
+# premultiplied alpha is broken; main (0.2.0 on zenrav1e 0.2.0) fixes all
+# three (0/120), but is on git only, and crates.io refuses a crate with a git
+# dependency. A dev-dependency without a version is dropped from the
+# published crate. AVIF output returns, as a normal dependency, when 0.2.0 is
+# on crates.io (Baris, 2026-10-31). No default features: `asm` needs nasm,
+# and the family builds with no C toolchain. `imazen` carries
+# `with_lossless`. Update the rev only deliberately.
+zenravif = { git = "https://github.com/imazen/cavif-rs", rev = "52bb0243a418989393c884ab0d1226c356cb2272", default-features = false, features = ["imazen"] }
 
-# zenravif main asks for zenavif-serialize 0.2.0, which is on git only. A
-# [patch] applies only at the top of a build: a crate that depends on
-# imagoverto needs this same entry until zenravif 0.2.0 is on crates.io.
+# zenravif main asks for zenavif-serialize 0.2.0, which is on git only. Only
+# the tests above need it; a [patch] is never published, and a crate that
+# depends on imagoverto does not need it.
 [patch.crates-io]
 zenavif-serialize = { git = "https://github.com/imazen/zenavif", rev = "94116d266299f347cfd10a75d440a5bc3b598d2c" }
+
+# family-web's measured WASM profile (wasm/BUILD-PROFILE.md): smaller and
+# faster than the default, for the browser build and the binaries alike. A
+# crate that depends on imagoverto keeps its own profile.
+[profile.release]
+opt-level = 2
+lto = true
+codegen-units = 1

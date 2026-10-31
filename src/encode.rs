@@ -23,9 +23,9 @@ pub(crate) enum Mode {
 
 /// Encode `img` to `format`. The caller has already settled what the format
 /// cannot hold: no transparency for JPEG, no 16-bit for a lossless target that
-/// stores 8 bits. `img` carries no fully-opaque alpha channel. WebP and AVIF
-/// stop early, with [`Error::Cancelled`], once `cancel` stops (JPEG XL is
-/// handed it too, but jxl-encoder 0.3.4 does not check it yet).
+/// stores 8 bits, no AVIF target. `img` carries no fully-opaque alpha
+/// channel. WebP stops early, with [`Error::Cancelled`], once `cancel` stops
+/// (JPEG XL is handed it too, but jxl-encoder 0.3.4 does not check it yet).
 pub(crate) fn encode(
     img: &DynamicImage,
     icc: Option<&[u8]>,
@@ -46,7 +46,7 @@ pub(crate) fn encode(
         },
         Format::WebP => encode_webp(img, icc, mode, level, stop),
         Format::Jxl => encode_jxl(img, icc, mode, level, stop),
-        Format::Avif => encode_avif(img, icc, mode, level, cancel),
+        Format::Avif => unreachable!("no AVIF encoder in this release; refused before encoding"),
     };
     let res = catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|_| {
         Err(Error::Internal {
@@ -264,82 +264,4 @@ fn encode_jxl(
 
 fn ne_bytes(px: Vec<u16>) -> Vec<u8> {
     px.into_iter().flat_map(u16::to_ne_bytes).collect()
-}
-
-/// The zenravif quality for a WebP-scale quality at an encoder speed: the
-/// one whose mean butteraugli distance (3-norm) matches WebP's, fitted over
-/// 60 photos and 60 drawings from Baris's shelf with zenravif main, 8-bit
-/// (measured 2026-10-30, `fit_levels`; every point within 2.2 of the curve
-/// at speed 4, 2.7 at 7). Both speeds were fitted on one sample, so the
-/// levels agree with each other; an earlier speed-4 fit on
-/// another sample of the same shelf came out 4 lower at quality 80, which
-/// is the size of the sampling error. Clamped to the fitted range, as for
-/// [`jxl_distance`].
-fn avif_quality(webp_quality: u8, speed: u8) -> f32 {
-    let q = f32::from(webp_quality).clamp(45.0, 95.0);
-    let raw = match speed {
-        4 => 0.012055 * q * q - 1.09150 * q + 78.0198,
-        _ => 0.010964 * q * q - 0.98172 * q + 78.0626,
-    };
-    raw.clamp(1.0, 100.0)
-}
-
-/// The AVIF encoder speed per level, lossy and lossless. Lossy speed 7 is
-/// 7-9x quicker than 4 for 8% more on photos and 38% on drawings; speed 5 is
-/// worse than 6 and 7 on both counts, and 8 writes the same file as 7. Speed
-/// 10 is not used: its files came out 43-72% larger than WebP's at the same
-/// quality, while still 5x slower than WebP, so `Faster` stays at 7. Lossless
-/// AVIF is already larger than PNG, so only `Faster` leaves speed 4 there.
-fn avif_speed(level: Compression, mode: Mode) -> u8 {
-    match (level, mode) {
-        (Compression::Smaller, _) | (Compression::Balanced, Mode::Lossless) => 4,
-        _ => 7,
-    }
-}
-
-/// AVIF, 8-bit. Gray without alpha is written monochrome (one plane).
-/// Lossless is quantizer 0 on RGB planes (identity matrix, 4:4:4, full range)
-/// with the colour under transparent pixels kept, as WebP's `exact`.
-fn encode_avif(
-    img: &DynamicImage,
-    icc: Option<&[u8]>,
-    mode: Mode,
-    level: Compression,
-    cancel: Option<&Cancel>,
-) -> Result<Vec<u8>, Error> {
-    use rgb::FromSlice;
-    use zenravif::{AlphaColorMode, BitDepth, ColorModel, Encoder};
-    let speed = avif_speed(level, mode);
-    let mut enc = Encoder::new()
-        .with_speed(speed)
-        .with_bit_depth(BitDepth::Eight);
-    enc = match mode {
-        Mode::Lossless => enc
-            .with_lossless(true)
-            .with_internal_color_model(ColorModel::RGB)
-            .with_alpha_color_mode(AlphaColorMode::UnassociatedDirty),
-        // The default alpha mode, `UnassociatedClean`, only rewrites colour
-        // where alpha hides it. Never `Premultiplied`: 0.1.3 wrote alpha 255
-        // as about 1 there, and nothing here needs it.
-        Mode::Lossy(q) => enc.with_quality(avif_quality(q, speed)),
-    };
-    if let Some(icc) = icc {
-        enc = enc.with_icc_profile(icc.to_vec());
-    }
-    if let Some(cancel) = cancel {
-        enc = enc.with_stop(almost_enough::StopToken::new(cancel.clone()));
-    }
-    let (w, h) = (img.width() as usize, img.height() as usize);
-    let res = if img.color().has_alpha() {
-        let rgba = img.to_rgba8();
-        enc.encode_rgba(imgref::Img::new(rgba.as_raw().as_rgba(), w, h))
-    } else if is_gray(img) {
-        let gray = img.to_luma8();
-        enc.encode_gray8(imgref::Img::new(gray.as_raw().as_slice(), w, h))
-    } else {
-        let rgb = img.to_rgb8();
-        enc.encode_rgb(imgref::Img::new(rgb.as_raw().as_rgb(), w, h))
-    };
-    res.map(|e| e.avif_file)
-        .map_err(|e| failed(Format::Avif)(&e))
 }

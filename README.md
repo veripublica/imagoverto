@@ -1,11 +1,12 @@
 # imagoverto
 
 **Converts still images between WebP, AVIF, JPEG XL, JPEG and PNG**, in pure
-Rust: a library, and a command-line tool for people and scripts who want to
-convert images without writing code. The name is Latin: *imago*, image, and
+Rust: a library, a command-line tool for people and scripts who want to
+convert images without writing code, and a [web page](https://veripublica.github.io/imagoverto/)
+that converts an image in your browser, with no upload. The name is Latin: *imago*, image, and
 *verto*, to turn.
 
-> Part of the **veripublica** family. [epublift](https://github.com/veripublica/epublift)
+> Part of the **veripublica** family. [epublift](https://github.com/ePubLift/epublift)
 > will use it for the images in EPUB books; imagoverto itself knows nothing
 > about books.
 
@@ -15,9 +16,15 @@ formats and need the way forward.
 
 ## Status
 
-Working, and tested, but **not released**: nothing is on crates.io and there
-are no binaries yet. The API may still change. Until it is stable, install it
-from source (below).
+**0.1: early.** It works and is tested, but the API may still change before
+1.0.
+
+**This release reads AVIF but does not write it.** The only AVIF encoder
+imagoverto trusts, [zenravif](https://github.com/imazen/cavif-rs), has the
+fixes it needs only on git so far. Its release on crates.io damages some real
+images, and its lossless mode is not lossless. AVIF output comes back in the
+release after zenravif 0.2.0 is published. Asking for AVIF output now is
+refused with an error that says so.
 
 ## What it does, and what it does not
 
@@ -25,13 +32,12 @@ It converts **one image file into another**, and tells you what happened: the
 sizes before and after, the quality used (or `lossless`), and anything you
 should know, such as transparency flattened onto a background.
 
-- **Without `--quality`, nothing is lost.** WebP, AVIF, JPEG XL and PNG are
+- **Without `--quality`, nothing is lost.** WebP, JPEG XL and PNG are
   written in their lossless modes. A JPEG converted to JPEG XL keeps the
   original JPEG inside, so it can be restored bit for bit. JPEG has no
   lossless mode, so a JPEG target needs a quality.
 - **`--quality` is one scale across formats**, 1–100, calibrated so that the
-  same number gives about the same visual quality in WebP, AVIF, JPEG XL and
-  JPEG. It is always lossy: 100 is the highest lossy quality, not lossless.
+  same number gives about the same visual quality in WebP, JPEG XL and JPEG. It is always lossy: 100 is the highest lossy quality, not lossless.
 - **`--image-compression smaller | balanced | faster`** trades encoding time
   for file size. It never changes the visual quality, the pixels of a
   lossless conversion, or the width and height. See
@@ -62,11 +68,18 @@ the choice to you.
 
 ## Install
 
-From source, with Rust 1.93 or later:
+- **Binaries** for Linux, macOS and Windows (x86_64 and ARM64) are on the
+  [releases page](https://github.com/veripublica/imagoverto/releases). Each
+  archive holds the `imagoverto` binary. `SHA256SUMS.txt` and a build
+  provenance attestation come with them.
+- **With Cargo**, Rust 1.93 or later:
 
-```sh
-cargo install --git https://github.com/veripublica/imagoverto --locked
-```
+  ```sh
+  cargo install imagoverto --locked
+  ```
+
+- **In the browser:** the [web page](https://veripublica.github.io/imagoverto/)
+  runs the same conversion. Your file never leaves the page.
 
 ## Usage
 
@@ -74,7 +87,7 @@ cargo install --git https://github.com/veripublica/imagoverto --locked
 imagoverto -i cover.webp --image-format jpeg --quality 85
 imagoverto -i logo.png --image-format jpeg --quality 90 --background white
 imagoverto -i photo.jpg --image-format jxl                  # lossless, JPEG kept inside
-imagoverto -i photo.jpg --image-format avif --quality 80 --image-compression smaller
+imagoverto -i photo.jpg --image-format webp --quality 80 --image-compression smaller
 imagoverto inspect -i cover.webp                           # what is this file?
 ```
 
@@ -100,7 +113,6 @@ an encoder has nothing to trade, two levels use the same setting.
 
 | Format | `smaller` | `balanced` | `faster` |
 |---|---|---|---|
-| AVIF | slowest, smallest setting | about 8× quicker; about 8% larger on photos, 38% on drawings | as `balanced` |
 | JPEG XL | as `balanced` | — | about 4× quicker; 9–20% larger |
 | WebP | as `balanced` | — | slightly quicker, about 1% larger |
 | PNG | about 1% smaller, 2–3× slower | — | far quicker, about 30% larger |
@@ -115,50 +127,36 @@ takes 6× as long.
 
 ```toml
 [dependencies]
-imagoverto = { git = "https://github.com/veripublica/imagoverto", default-features = false }
-
-# Needed until zenravif 0.2.0 is on crates.io (see below).
-[patch.crates-io]
-zenavif-serialize = { git = "https://github.com/imazen/zenavif", rev = "94116d266299f347cfd10a75d440a5bc3b598d2c" }
+imagoverto = { version = "0.1", default-features = false }
 ```
 
 ```rust
 use imagoverto::{Compression, Format, Options, convert};
 
-let input = std::fs::read("cover.webp")?;
-let options = Options::new(Format::Avif)
+let input = std::fs::read("cover.avif")?;
+let options = Options::new(Format::WebP)
     .with_quality(80)
     .with_compression(Compression::Balanced);
 let out = convert(&input, &options)?;
-std::fs::write("cover.avif", &out.bytes)?;
+std::fs::write("cover.webp", &out.bytes)?;
 println!("{} → {} bytes, {:?}", out.input_size, out.bytes.len(), out.quality);
 ```
 
 - **No CLI:** `default-features = false` leaves out the command-line tool and
   its JSON dependencies.
 - **WebAssembly:** the library builds for `wasm32-unknown-unknown` and is
-  tested on `wasm32-wasip1`.
+  tested on `wasm32-wasip1`. For JavaScript, the npm package
+  [`@veripublica/imagoverto-wasm`](https://www.npmjs.com/package/@veripublica/imagoverto-wasm) wraps it.
 - **Bounding the work:** for input you do not trust, such as on a server, two
   options bound how long one conversion can take:
   - `Options::with_max_pixels` refuses an image from its header, before
     anything is decoded.
   - `Options::with_cancel` takes a `Cancel` token. You can cancel it from
     another thread, or create it with a deadline (`Cancel::after`). The WebP
-    and AVIF encoders stop within a fraction of a second. The JPEG XL encoder
-    does not check the token yet, so a started JPEG XL encode runs to its
-    end.
+    encoder stops within a fraction of a second. The JPEG XL encoder does not
+    check the token yet, so a started JPEG XL encode runs to its end.
 - **Threads:** `convert` keeps no state, so it can be called from several
   threads at once. That is how a batch of images uses more than one core.
-
-### Why the patch
-
-AVIF is encoded with [zenravif](https://github.com/imazen/cavif-rs) from git,
-pinned to a reviewed commit, not with the 0.1.3 release on crates.io. That
-release damages some real images and its lossless mode is not lossless. The
-git version fixes both, but it depends on a crate that is not yet published
-in the matching version. Cargo applies `[patch]` only from the top-level
-project, so your project needs the same line. It goes away once zenravif 0.2.0
-is published.
 
 ## Codecs
 
@@ -168,7 +166,7 @@ is published.
 | PNG | image | image |
 | WebP | [zenwebp](https://crates.io/crates/zenwebp) | zenwebp |
 | JPEG XL | [zenjxl](https://crates.io/crates/zenjxl) | zenjxl, jxl-encoder (JPEG recompression) |
-| AVIF | [zenavif-parse](https://crates.io/crates/zenavif-parse) + [rav1d-safe](https://crates.io/crates/rav1d-safe) | [zenravif](https://github.com/imazen/cavif-rs) (git) |
+| AVIF | [zenavif-parse](https://crates.io/crates/zenavif-parse) + [rav1d-safe](https://crates.io/crates/rav1d-safe) | not yet (see [Status](#status)) |
 
 Everything is Rust; nothing needs a C compiler. AVIF decoding is tested byte
 for byte against dav1d.

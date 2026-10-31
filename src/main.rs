@@ -21,6 +21,7 @@ use serde::Serialize;
 
 const HELP: &str = "\
 imagoverto — convert still images between WebP, AVIF, JPEG XL, JPEG and PNG
+(this release reads AVIF but does not write it)
 
 USAGE:
     imagoverto [convert] -i <PATH> --image-format <FORMAT> [OPTIONS]
@@ -57,11 +58,13 @@ OPTIONS:
                             would not change.
     -f, --force             Permit replacing existing output files. Never lifts
                             the output-equals-input refusal.
-        --image-format <webp|avif|jxl|jpeg|png>
-                            The format to encode to. Required.
+        --image-format <webp|jxl|jpeg|png>
+                            The format to encode to. Required. avif is refused
+                            in this release: its encoder is not published
+                            yet.
         --quality <1-100>   Encode lossily at this quality, on one scale across
                             formats. Without it the conversion is lossless:
-                            WebP, AVIF, JPEG XL and PNG in their lossless
+                            WebP, JPEG XL and PNG in their lossless
                             modes, and JPEG to JPEG XL keeps the original JPEG
                             inside. JPEG needs a quality; PNG takes none.
         --image-compression <smaller|balanced|faster>
@@ -348,7 +351,7 @@ fn parse(args: &[String]) -> Cli {
             None => {
                 fail!(
                     "invalid value '{name}' for --image-format; supported values: \
-                     webp, avif, jxl, jpeg, png"
+                     webp, jxl, jpeg, png"
                 );
                 None
             }
@@ -981,7 +984,7 @@ mod tests {
             "-i",
             "a.png",
             "--image-format",
-            "avif",
+            "webp",
             "--image-compression",
             "faster",
         ]) {
@@ -1028,9 +1031,7 @@ mod tests {
             usage(&["-i", "a", "--format", "x", "--format", "json"]).contains("more than once")
         );
         assert!(usage(&["-i", "a", "--format", "xml"]).contains("supported values: human, json"));
-        assert!(
-            usage(&["-i", "a", "--image-format", "gif"]).contains("webp, avif, jxl, jpeg, png")
-        );
+        assert!(usage(&["-i", "a", "--image-format", "gif"]).contains("webp, jxl, jpeg, png"));
         assert!(
             usage(&["-i", "a", "--image-format", "png", "--quality", "0"]).contains("1 to 100")
         );
@@ -1052,6 +1053,7 @@ mod tests {
             usage(&["inspect", "-i", "a", "--image-compression", "faster"]).contains("for convert")
         );
         assert_eq!(usage(&["-i", "a"]), "missing required --image-format");
+        assert!(usage(&["-i", "a", "--image-format", "avif"]).contains("AVIF output"));
         // Option-level refusals, before any file is read.
         assert!(
             usage(&["-i", "a", "--image-format", "jpeg"]).contains("JPEG has no lossless mode")

@@ -8,13 +8,12 @@ use std::time::{Duration, Instant};
 /// A way to stop a conversion before it finishes: from another thread with
 /// [`cancel`](Cancel::cancel), or by a deadline ([`Cancel::after`]).
 /// imagoverto checks it before decoding and before encoding, and the WebP
-/// and AVIF encoders check it as they work (AVIF once per 64×64 block), so a
-/// stopped conversion returns [`Error::Cancelled`](crate::Error) soon and
-/// frees its thread. The JPEG XL encoder (jxl-encoder 0.3.4) takes the token
+/// encoder checks it as it works, so a stopped conversion returns
+/// [`Error::Cancelled`](crate::Error) soon and frees its thread. The JPEG XL encoder (jxl-encoder 0.3.4) takes the token
 /// but never checks it, so a JPEG XL encode that has started runs to the
 /// end; [`Options::max_pixels`](crate::Options) bounds how long that is. The
 /// JPEG and PNG encoders and the decoders do not check it either; they are
-/// fast next to AVIF.
+/// fast next to WebP and JPEG XL.
 ///
 /// Clones share one flag: cancelling any of them cancels all.
 #[derive(Debug, Clone, Default)]

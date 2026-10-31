@@ -11,7 +11,7 @@
 //! grid of qualities, decodes the result back and measures the butteraugli
 //! distance to the reference (3-norm, the score epublift's calibration used).
 //! WebP's mean distance at each quality, at the default compression level,
-//! is the anchor. For JPEG, and for WebP, AVIF and JPEG XL at every
+//! is the anchor. For JPEG, and for WebP and JPEG XL at every
 //! compression level, it reports the mean distance imagoverto's *calibrated*
 //! encode reaches at the same quality, against the anchor, to check each
 //! mapping: a level must change the size, not the quality.
@@ -80,11 +80,8 @@ fn main() {
         ("balanced", Compression::Balanced),
         ("faster", Compression::Faster),
     ] {
-        for (f, format) in [
-            ("webp", Format::WebP),
-            ("avif", Format::Avif),
-            ("jxl", Format::Jxl),
-        ] {
+        // AVIF output returns with zenravif 0.2.0.
+        for (f, format) in [("webp", Format::WebP), ("jxl", Format::Jxl)] {
             if !(f == "webp" && name == "balanced") {
                 columns.push((leak(format!("{f}/{name}")), format, level));
             }

@@ -1,4 +1,6 @@
-//! Converts still images between WebP, AVIF, JPEG XL, JPEG and PNG.
+//! Converts still images between WebP, AVIF, JPEG XL, JPEG and PNG. This
+//! release reads all five and writes all but AVIF: AVIF output returns when
+//! its encoder, zenravif 0.2, is published on crates.io.
 //!
 //! [`convert`] turns one image into another; [`inspect`] reads what a file's
 //! header says.

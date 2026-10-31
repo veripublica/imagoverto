@@ -1,0 +1,24 @@
+[package]
+name = "imagoverto-wasm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+description = "WebAssembly bindings for imagoverto: convert still images to WebP, JPEG XL, JPEG and PNG in the browser, no upload."
+license = "AGPL-3.0-only"
+# npm's canonical repository.url form (wasm-pack copies it into package.json).
+repository = "git+https://github.com/veripublica/imagoverto.git"
+homepage = "https://github.com/veripublica/imagoverto"
+readme = "README.md"
+keywords = ["image", "webp", "jpeg-xl", "wasm", "converter"]
+# Not on crates.io: its consumer is npm, as @veripublica/imagoverto-wasm,
+# built by wasm-pack (publish-npm.yml), as kepubverto-wasm is.
+publish = false
+
+# A thin JS boundary over imagoverto's public API; no conversion logic of its own.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+imagoverto = { path = "..", default-features = false }
+wasm-bindgen = "0.2.129"
+js-sys = "0.3.106"

@@ -9,7 +9,7 @@
 //!
 //! `BOOKS_DIR` holds one directory per book with that book's images (any of
 //! the five formats; other files are skipped). Each book is converted on one
-//! thread, image after image, to WebP, JPEG, JPEG XL and AVIF at `QUALITY`
+//! thread, image after image, to WebP, JPEG and JPEG XL at `QUALITY`
 //! (default 80); books run side by side on all cores but two. Prints one
 //! line per book (images, megapixels, seconds per format), slowest last.
 //! Only numbers are printed; nothing from the images is written anywhere.
@@ -20,7 +20,9 @@ use std::time::Instant;
 
 use imagoverto::{Format, Options, convert, inspect};
 
-const FORMATS: [Format; 4] = [Format::WebP, Format::Jpeg, Format::Jxl, Format::Avif];
+// AVIF output returns with zenravif 0.2.0 (the AVIF column of the
+// 2026-10-30 measurement used zenravif main at speed 4).
+const FORMATS: [Format; 3] = [Format::WebP, Format::Jpeg, Format::Jxl];
 
 struct Book {
     name: String,
@@ -72,7 +74,7 @@ fn main() {
         "{} books, quality {quality}, {threads} threads",
         books.len()
     );
-    println!("images      MP    webp_s    jpeg_s     jxl_s    avif_s  book");
+    println!("images      MP    webp_s    jpeg_s     jxl_s  book");
     for (_, line) in &rows {
         println!("{line}");
     }
@@ -120,13 +122,12 @@ fn time_book(book: &Book, quality: u8) -> (f64, String) {
         })
         .collect();
     let line = format!(
-        "{:>6} {:>7.1} {:>9.1} {:>9.1} {:>9.1} {:>9.1}  {}",
+        "{:>6} {:>7.1} {:>9.1} {:>9.1} {:>9.1}  {}",
         book.images.len(),
         book.megapixels,
         secs[0],
         secs[1],
         secs[2],
-        secs[3],
         book.name
     );
     (secs.iter().copied().fold(0.0, f64::max), line)

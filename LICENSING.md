@@ -54,10 +54,8 @@ The codecs that matter for licensing are these. The full list is in
 |---|---|---|
 | `zenwebp` | WebP read and write | AGPL-3.0-only OR LicenseRef-Imazen-Commercial |
 | `zenjxl`, `jxl-encoder` (with `jxl-encoder-simd`, `zenjpeg`) | JPEG XL read and write, JPEG → JPEG XL recompression | AGPL-3.0-only OR LicenseRef-Imazen-Commercial |
-| `zenravif`, `zenrav1e` | AVIF write | AGPL-3.0-only OR LicenseRef-Imazen-Commercial |
 | `rav1d-safe` | AVIF read (the AV1 data) | AGPL-3.0-only OR LicenseRef-Imazen-Commercial |
 | `zenavif-parse` | AVIF read (the container) | MPL-2.0 |
-| `zenavif-serialize` | AVIF write (the container) | BSD-3-Clause |
 | `image` | JPEG and PNG read and write | MIT OR Apache-2.0 |
 | `moxcms` | colour profiles | BSD-3-Clause OR Apache-2.0 |
 
@@ -65,14 +63,19 @@ The rest are small permissive crates: MIT, Apache-2.0, BSD, Zlib, CC0 or
 Unlicense, most of them dual-licensed. All of them are compatible with
 AGPL-3.0-only.
 
-**Three of these come from git, not crates.io.** `zenravif` (from
+**Nothing in the published crate comes from git.** The tests of the AVIF
+reader encode their AVIF input with `zenravif` (from
 [imazen/cavif-rs](https://github.com/imazen/cavif-rs)), `zenrav1e` and
-`zenavif-serialize` are taken from Imazen's repositories, each pinned to one
-commit. The released `zenravif` 0.1.3 damages some real images, and its
-lossless mode loses pixels. The unreleased 0.2.0 fixes both. Their licenses
-are the same as above. imagoverto moves to the crates.io release when it is
-published. A project that depends on imagoverto needs the same
-`[patch.crates-io]` line for `zenavif-serialize`; the README shows it.
+`zenavif-serialize`, taken from Imazen's repositories and pinned to one
+commit each: AGPL-3.0-only OR LicenseRef-Imazen-Commercial, and
+BSD-3-Clause for `zenavif-serialize`. They are test dependencies only, and
+are not in the crate on crates.io, the binaries or the npm package. When
+zenravif 0.2.0 is published on crates.io, it becomes imagoverto's AVIF
+encoder, under the same license.
+
+The npm package `@veripublica/imagoverto-wasm` and the web page are this
+library compiled to WebAssembly, with `wasm-bindgen` and `js-sys` (MIT OR
+Apache-2.0) as the JavaScript boundary. They are AGPL-3.0-only too.
 
 `ravif`, the BSD-licensed AVIF encoder that `zenravif` was forked from, is
 not used. It was measured as an alternative and not taken.

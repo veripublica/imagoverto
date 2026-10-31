@@ -1,0 +1,170 @@
+name: Publish to npm
+
+# Publishes @veripublica/imagoverto-wasm when a `v*` tag is pushed — the npm half
+# of the release that publish-crate.yml does for crates.io. kepubverto's
+# workflow of the same name.
+#
+# AUTHENTICATION — npm trusted publishing (OIDC), no stored token. Same model as
+# the crates.io workflow: npm issues credentials against a GitHub-signed claim
+# naming this repo and this workflow file. That is what makes CI publishing
+# possible at all here — the owner's npm account authenticates interactively,
+# which cannot be replayed from a runner.
+#
+# It also removes two hazards that only exist on the owner's machine:
+#   - iCloud drops sync-conflict copies ("LICENSE 2") into the build directory;
+#     two of them shipped in an epubveri tarball that way. A runner has no
+#     iCloud.
+#   - build.rs bakes git metadata into VERSION, including `.dirty` when the
+#     working tree is not clean — the string the CLI's -V, the json envelope's
+#     tool_version and the wasm binding's version() all print. A runner checks
+#     out the tag clean, so a release can no longer be labelled `.dirty`.
+#
+# ONE-TIME SETUP (owner, on npmjs.com): the package -> Settings -> Trusted
+# Publisher -> GitHub Actions, with organization `veripublica`, repository
+# `imagoverto`, workflow filename `publish-npm.yml`, environment EMPTY, and
+# `npm publish` among the allowed actions. As with crates.io, the trust link
+# names this file — renaming it breaks publishing until npm is re-pointed.
+#
+# If the publish is rejected for a missing OTP even after that, the package's
+# publishing-access setting is still demanding 2FA for every publish; it has to
+# allow trusted publishers.
+#
+# Provenance is automatic (public repo + public package), so releases carry a
+# signed attestation of the commit and workflow that built them, with no flag.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required for the OIDC claim, and for provenance.
+      id-token: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      # npm trusted publishing needs npm >= 11.5.1 on Node >= 22.14, which is
+      # newer than some runner images ship; setup-node also writes the .npmrc
+      # that points publishing at the registry.
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Ensure npm is new enough for trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      # Guard 1: the package version comes from imagoverto-wasm/Cargo.toml at
+      # build time, so a tag that disagrees with it would publish the wrong
+      # number. Checked before anything is built.
+      - name: Verify tag matches the manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag || github.ref_name }}"
+          want="${tag#v}"
+          # `jq -e` exits non-zero if the filter matches nothing, so a renamed
+          # or missing package stops the release instead of comparing the tag
+          # against an empty string.
+          got=$(cargo metadata --no-deps --format-version 1 \
+                | jq -e -r '.packages[] | select(.name == "imagoverto-wasm") | .version')
+          echo "tag=$want  imagoverto-wasm=$got"
+          [ "$want" = "$got" ] || { echo "::error::tag $tag does not match imagoverto-wasm version $got"; exit 1; }
+
+      # Guard 2: npm refuses to republish a version, and that failure reads as a
+      # broken release rather than the no-op it is. Make re-runs harmless.
+      - name: Skip if this version is already on npm
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag || github.ref_name }}"
+          ver="${tag#v}"
+          if npm view "@veripublica/imagoverto-wasm@$ver" version > /dev/null 2>&1; then
+            echo "::notice::@veripublica/imagoverto-wasm $ver is already published; nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The release binary, pinned and checked, not `cargo install`: compiling
+      # it took 1 min 40 s of epubsana's job's 3 min 49 s on v0.24.0, on the path
+      # every release waits on. Same version that build compiled (0.15.0),
+      # digest from the GitHub release API (2026-10-08). Bump both together.
+      - name: Install wasm-pack
+        if: steps.check.outputs.skip == 'false'
+        env:
+          WASM_PACK: v0.15.0
+          WASM_PACK_SHA256: c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a
+        run: |
+          set -euo pipefail
+          name="wasm-pack-$WASM_PACK-x86_64-unknown-linux-musl"
+          curl -sSfL -o wasm-pack.tar.gz \
+            "https://github.com/wasm-bindgen/wasm-pack/releases/download/$WASM_PACK/$name.tar.gz"
+          echo "$WASM_PACK_SHA256  wasm-pack.tar.gz" | sha256sum -c -
+          tar xzf wasm-pack.tar.gz
+          install "$name/wasm-pack" "$HOME/.cargo/bin/wasm-pack"
+          rm -rf wasm-pack.tar.gz "$name"
+          wasm-pack --version
+
+      # No --out-name: the artefacts are `imagoverto_wasm*`, derived from the
+      # crate name. The scope is what makes the package `@veripublica/imagoverto-wasm`.
+      - name: Build the package
+        if: steps.check.outputs.skip == 'false'
+        run: wasm-pack build imagoverto-wasm --target bundler --scope veripublica
+
+      # Assert on the *packed* file list rather than on pkg/, because that is
+      # where the two diverged: a file can sit in the directory and still not
+      # ship. This is the guard that would have caught epubsana's 0.6.0
+      # omission (a licence file in pkg/ but not in the package).
+      - name: Verify the licence ships
+        if: steps.check.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Read the file list without indexing into the document. `npm pack
+          # --json` prints an array of pack results on npm 11 and an object on
+          # npm 12, and the step above installs npm@latest — so the shape can
+          # change under this workflow with no change to this repo. It did:
+          # epubsana 0.7.0's first publish attempt died here on `.[0]` the day npm 12
+          # landed, which at least failed safe (nothing was published). Walking
+          # for entries that have a `path` works either way, and the raw output
+          # is echoed so the next surprise is diagnosable from the log alone.
+          raw=$(npm pack ./imagoverto-wasm/pkg --dry-run --json)
+          echo "$raw"
+          files=$(jq -r '[.. | objects | select(has("path")) | .path] | .[]' <<< "$raw")
+          echo "--- packed files ---"
+          echo "$files"
+          for want in LICENSE; do
+            grep -qx "$want" <<< "$files" \
+              || { echo "::error::$want is missing from the npm package"; exit 1; }
+          done
+
+      # Confirm the built package is what we think it is before publishing:
+      # right name and version, and no stray files. (The iCloud conflict-copy
+      # check is moot on a runner, but a surprise in the file list is worth
+      # failing on either way.)
+      - name: Inspect the package
+        if: steps.check.outputs.skip == 'false'
+        run: npm publish ./imagoverto-wasm/pkg --access public --dry-run
+
+      - name: Publish
+        if: steps.check.outputs.skip == 'false'
+        run: npm publish ./imagoverto-wasm/pkg --access public

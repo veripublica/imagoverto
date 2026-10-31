@@ -1,0 +1,191 @@
+name: Release binaries
+
+# Builds the `imagoverto` CLI for eight Linux/macOS/Windows targets and
+# attaches the archives, SHA256SUMS.txt and a provenance attestation to the
+# matching GitHub Release. The layout is kepubverto's (and epubveri's and
+# epubsana's), which conventions' release-asset draft codifies: one archive per
+# target named `imagoverto-<triple>.tar.gz` (`.zip` on Windows), no version in
+# the name, the binary in a folder of the same name.
+#
+# Pure Rust with no C dependencies, so every target builds on a runner of its
+# own architecture; ARM64 Windows is linked by MSVC from the x86_64 runner.
+# Triggered by a `v*` tag. `workflow_dispatch` re-runs it against an existing
+# tag, or, with `dry_run`, builds and checks every target without touching any
+# release (to try a change to this file before a tag needs it).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag/release to attach binaries to (e.g. v0.1.0); empty for a dry run"
+        required: false
+      dry_run:
+        description: "Build and check the archives only; attach nothing"
+        type: boolean
+        default: false
+
+# Read-only by default. Only the `release` job, which attaches files and signs
+# the attestation, is granted more.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64: glibc (mainstream distros) and musl (fully static).
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          # Linux ARM64, native on GitHub's ARM64 runner.
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+          # macOS: Intel and Apple Silicon.
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          # Windows: x86_64 (native) and ARM64 (cross-linked by MSVC).
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build (release)
+        run: cargo build --release --locked --bin imagoverto --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          stage="imagoverto-${{ matrix.target }}"
+          mkdir "$stage"
+          cp "target/${{ matrix.target }}/release/imagoverto" "$stage/"
+          cp LICENSE LICENSING.md README.md "$stage/"
+          tar czf "$stage.tar.gz" "$stage"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $stage = "imagoverto-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/imagoverto.exe" $stage/
+          Copy-Item LICENSE, LICENSING.md, README.md $stage/
+          Compress-Archive -Path $stage -DestinationPath "$stage.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: imagoverto-${{ matrix.target }}
+          path: |
+            imagoverto-${{ matrix.target }}.tar.gz
+            imagoverto-${{ matrix.target }}.zip
+          if-no-files-found: ignore
+
+  # Everything that writes to the release happens here, once, after all eight
+  # builds: the checksum list and the attestation must cover every archive.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      # A manual run without a tag would otherwise attach to a release named
+      # after the branch.
+      - name: Check the tag
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release tag: '$tag'" >&2; exit 1; }
+
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      # `if-no-files-found: ignore` above lets a packaging step that produced
+      # nothing pass, so count before anything is written: six tarballs and
+      # two zips.
+      - name: Check every target produced an archive
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ls -l
+          n=$(ls -1 imagoverto-*.tar.gz imagoverto-*.zip 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$n" -ne 8 ]; then
+            echo "expected 8 archives, found $n" >&2
+            exit 1
+          fi
+
+      - name: Write SHA256SUMS.txt
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum imagoverto-*.tar.gz imagoverto-*.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # Stop here on a dry run: the archives built and counted, nothing signed
+      # or attached.
+      - name: Attest build provenance
+        if: ${{ !inputs.dry_run }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/imagoverto-*.tar.gz
+            dist/imagoverto-*.zip
+
+      # The release body is this version's CHANGELOG.md section, never typed
+      # by hand (epubveri's 0.5.x releases shipped with blank pages).
+      - name: Extract release notes from CHANGELOG
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          ver="${tag#v}"
+          awk -v ver="$ver" '
+            $0 ~ "^## \\[" ver "\\]" {inblk=1; next}
+            inblk && /^## \[/ {exit}
+            inblk { if (!started && $0 ~ /^[[:space:]]*$/) next; started=1; buf[n++]=$0 }
+            END { last=n-1; while (last>=0 && buf[last] ~ /^[[:space:]]*$/) last--; for (i=0;i<=last;i++) print buf[i] }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "error: no '## [$ver]' section in CHANGELOG.md; add it before tagging" >&2
+            exit 1
+          fi
+          printf '\n\nFull notes: [CHANGELOG.md](https://github.com/veripublica/imagoverto/blob/main/CHANGELOG.md).\n' >> RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
+
+      - name: Attach to release
+        if: ${{ !inputs.dry_run }}
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          files: dist/*
