@@ -46,7 +46,7 @@ inspect(bytes); // { format, width, height, hasAlpha, bitDepth, jpegQuality, …
   cannot be caught in WebAssembly either: it traps the instance. The demo
   page runs each conversion in a worker and starts a new one when needed.
 - Licence: AGPL-3.0-only (`LICENSE`, in the package).
-- The demo page (`demo/`) uses family-web's template v7 (family-web v0.7.2);
+- The demo page (`demo/`) uses family-web's template v8 (family-web v0.8.0);
   `tokens.css` and `demo.css` are unedited copies.
 
 Build and serve locally:
