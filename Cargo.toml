@@ -13,8 +13,8 @@ keywords = ["image", "webp", "avif", "jpeg-xl", "converter"]
 categories = ["multimedia::images", "command-line-utilities"]
 # Released early to hold the name on crates.io and npm (Baris, 2026-10-31);
 # 0.x, and AVIF output waits for zenravif 0.2.0. Only what builds the crate
-# goes into the package.
-include = ["/src", "/build.rs", "/Cargo.toml", "/LICENSE", "/LICENSING.md", "/README.md", "/CHANGELOG.md"]
+# and its public documents goes into the package.
+include = ["/src", "/build.rs", "/Cargo.toml", "/LICENSE", "/LICENSING.md", "/README.md", "/AGENTS.md", "/CHANGELOG.md"]
 
 # The WASM/JS boundary lives in a separate workspace member, so its
 # wasm-bindgen deps never reach this crate (kepubverto's pattern). It reuses
