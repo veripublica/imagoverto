@@ -4,7 +4,7 @@
 true at every release. Past changes: `CHANGELOG.md`. API docs:
 <https://docs.rs/imagoverto>.
 
-Figures below name the versions they were measured on. Current version: 0.1.0.
+Figures below name the versions they were measured on. Current version: 0.1.1.
 
 ## Scope
 
@@ -126,7 +126,7 @@ print no envelope. `inspect` also describes an unreadable image in the envelope.
 ```json
 {
   "tool": "imagoverto",
-  "tool_version": "0.1.0",
+  "tool_version": "0.1.1",
   "convention": "0.7",
   "status": "ok",
   "inputs": [{

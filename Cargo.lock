@@ -519,7 +519,7 @@ dependencies = [
 
 [[package]]
 name = "imagoverto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "butteraugli",
  "enough",
@@ -540,7 +540,7 @@ dependencies = [
 
 [[package]]
 name = "imagoverto-wasm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "imagoverto",
  "js-sys",

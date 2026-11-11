@@ -7,6 +7,26 @@ imagoverto is pre-1.0, so breaking changes land as minor-version bumps
 (`0.x.0`), per [Cargo's SemVer compatibility
 rules](https://doc.rust-lang.org/cargo/reference/semver.html).
 
+## [0.1.1] - 2026-11-11
+
+A maintenance release: no change to conversion, options or output.
+
+### Changed
+
+- **Dependencies:** `Cargo.lock` brought to the veripublica family's shared
+  versions (archmage 0.9.31, cc 1.11.1, crc32fast 1.5.5, flate2 1.1.11,
+  log 0.4.35, smallvec 1.16.5, syn 3.0.10, yuv 0.8.20 and others). The
+  minimum Rust version stays 1.93.
+- **Documentation:** the detail (scope, command line, API, codecs, limits,
+  measurements) moved from `README.md` to `AGENTS.md`, which ships in the
+  crate. The README is now short.
+- **Web page:** the veripublica family's page template v8.
+
+### Known limitations
+
+Unchanged from 0.1.0: no AVIF output, JPEG XL encodes cannot be cancelled,
+and `inspect` reports an AVIF's lossless flag as unknown.
+
 ## [0.1.0] - 2026-10-31
 
 The first release. It reads all five formats and writes four: **AVIF output
