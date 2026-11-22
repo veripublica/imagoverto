@@ -1,9 +1,9 @@
 [package]
 name = "imagoverto"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 # The floor of the imazen codecs (zenwebp, zenjxl, zenravif, zenavif-parse).
-rust-version = "1.93"
+rust-version = "1.95"
 description = "Converts still images to WebP, JPEG XL, JPEG and PNG, and reads AVIF, in pure Rust."
 license = "AGPL-3.0-only"
 repository = "https://github.com/veripublica/imagoverto"

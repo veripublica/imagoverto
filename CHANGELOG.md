@@ -7,6 +7,27 @@ imagoverto is pre-1.0, so breaking changes land as minor-version bumps
 (`0.x.0`), per [Cargo's SemVer compatibility
 rules](https://doc.rust-lang.org/cargo/reference/semver.html).
 
+## [0.1.2] - 2026-11-23
+
+A maintenance release: no change to conversion, options or output.
+
+### Changed
+
+- **Minimum Rust version: 1.95** (was 1.93), for both `imagoverto` and
+  `imagoverto-wasm`. The whole veripublica family now builds with one
+  toolchain, and some crates already in the lock (`windows-*` 0.100,
+  `generator` 0.8.12) need 1.95.
+- **Dependencies:** `Cargo.lock` brought to the veripublica family's shared
+  versions (archmage 0.9.33, bumpalo 3.20.4, cc 1.11.3, pin-project-lite
+  0.2.18, regex-automata 0.4.19, regex-syntax 0.8.12, smallvec 1.16.6,
+  zerocopy 0.8.64 and others). hashbrown stays on 0.16: jxl-encoder and
+  zenwebp, which pull it in, have no release on 0.17 yet.
+
+### Known limitations
+
+Unchanged from 0.1.0: no AVIF output, JPEG XL encodes cannot be cancelled,
+and `inspect` reports an AVIF's lossless flag as unknown.
+
 ## [0.1.1] - 2026-11-11
 
 A maintenance release: no change to conversion, options or output.

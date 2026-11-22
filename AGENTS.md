@@ -4,7 +4,7 @@
 true at every release. Past changes: `CHANGELOG.md`. API docs:
 <https://docs.rs/imagoverto>.
 
-Figures below name the versions they were measured on. Current version: 0.1.1.
+Figures below name the versions they were measured on. Current version: 0.1.2.
 
 ## Scope
 
@@ -76,7 +76,7 @@ apple-darwin, pc-windows-msvc} are on the
 with the binary, `LICENSE`, `LICENSING.md` and `README.md`.
 
 ```sh
-cargo install imagoverto --locked   # Rust 1.93 or later
+cargo install imagoverto --locked   # Rust 1.95 or later
 npm install @veripublica/imagoverto-wasm
 ```
 
@@ -126,7 +126,7 @@ print no envelope. `inspect` also describes an unreadable image in the envelope.
 ```json
 {
   "tool": "imagoverto",
-  "tool_version": "0.1.1",
+  "tool_version": "0.1.2",
   "convention": "0.7",
   "status": "ok",
   "inputs": [{
