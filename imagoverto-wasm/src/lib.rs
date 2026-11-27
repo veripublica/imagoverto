@@ -63,7 +63,7 @@ export interface Info {
 
 /** Something the conversion did that the caller should know about. */
 export interface Finding {
-  /** "IMG-001" … "IMG-008", as the CLI's --format json carries them. */
+  /** "IMG-001" … "IMG-009", as the CLI's --format json carries them. */
   code: string;
   rule: string;
   severity: "info" | "warning";

@@ -3,7 +3,7 @@
 use std::io::Cursor;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use image::{DynamicImage, ExtendedColorType, ImageDecoder};
+use image::{DynamicImage, ImageDecoder};
 
 use crate::limits::{MAX_DECODED_BYTES, MAX_DIMENSION};
 use crate::{Error, Format, Info, inspect};
@@ -95,14 +95,6 @@ fn decode_with_image(format: Format, mut d: impl ImageDecoder) -> Result<Pixels,
         format,
         reason: e.to_string(),
     };
-    if matches!(d.original_color_type(), ExtendedColorType::Cmyk8) {
-        // `image` turns CMYK into RGB without the profile, so the colours
-        // would shift. Refused rather than converted wrongly.
-        return Err(Error::Unsupported {
-            format,
-            reason: "CMYK images are not converted".into(),
-        });
-    }
     d.set_limits(image_limits()).map_err(malformed)?;
     let icc = d.icc_profile().map_err(malformed)?;
     let orientation = d.orientation().map_err(malformed)?;
@@ -112,6 +104,15 @@ fn decode_with_image(format: Format, mut d: impl ImageDecoder) -> Result<Pixels,
 }
 
 fn decode_jpeg(bytes: &[u8]) -> Result<Pixels, Error> {
+    // `image` (0.25.10) reports a CMYK or YCCK JPEG as RGB and has zune-jpeg
+    // turn it into RGB without the profile, so the colours would shift.
+    // Refused rather than converted wrongly; the frame header says so.
+    if jpeg_components(bytes) == Some(4) {
+        return Err(Error::Unsupported {
+            format: Format::Jpeg,
+            reason: "CMYK images are not converted".into(),
+        });
+    }
     let d = image::codecs::jpeg::JpegDecoder::new(Cursor::new(bytes)).map_err(|e| {
         Error::Malformed {
             format: Format::Jpeg,
@@ -119,6 +120,29 @@ fn decode_jpeg(bytes: &[u8]) -> Result<Pixels, Error> {
         }
     })?;
     decode_with_image(Format::Jpeg, d)
+}
+
+/// The number of components a JPEG's frame header declares: 1 for gray, 3
+/// for YCbCr or RGB, 4 for CMYK or YCCK. `None` when no frame header comes
+/// before the scan.
+fn jpeg_components(bytes: &[u8]) -> Option<u8> {
+    let mut i = 2; // past SOI
+    while let [0xFF, marker, ..] = *bytes.get(i..)? {
+        if marker == 0xFF {
+            i += 1; // fill byte
+            continue;
+        }
+        // SOF0–SOF15, except DHT (C4), JPG (C8) and DAC (CC).
+        if (0xC0..=0xCF).contains(&marker) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
+            return bytes.get(i + 9).copied();
+        }
+        if marker == 0xDA {
+            return None; // SOS
+        }
+        let len = u16::from_be_bytes([*bytes.get(i + 2)?, *bytes.get(i + 3)?]);
+        i += 2 + usize::from(len);
+    }
+    None
 }
 
 fn decode_png(bytes: &[u8]) -> Result<Pixels, Error> {
@@ -305,6 +329,25 @@ mod tests {
         )
         .encode()
         .unwrap()
+    }
+
+    #[test]
+    fn cmyk_jpeg_is_refused() {
+        let cmyk = testimg::jpeg_8x8(4);
+        // The header reads, and `image` alone would decode it as RGB.
+        assert!(inspect(&cmyk).is_ok());
+        assert!(image::load_from_memory(&cmyk).is_ok());
+        assert!(matches!(
+            decode(&cmyk),
+            Err(Error::Unsupported {
+                format: Format::Jpeg,
+                ..
+            })
+        ));
+        assert_eq!(jpeg_components(&testimg::jpeg_8x8(3)), Some(3));
+        assert!(decode(&testimg::jpeg_8x8(3)).is_ok());
+        assert_eq!(jpeg_components(&testimg::jpeg_8x8(1)), Some(1));
+        assert_eq!(jpeg_components(b"\xFF\xD8"), None);
     }
 
     #[test]

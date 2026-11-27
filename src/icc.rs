@@ -1,4 +1,5 @@
-//! Recognising an ICC profile that says nothing beyond sRGB.
+//! Recognising an ICC profile that says nothing beyond sRGB, and fitting a
+//! profile to the pixels it is written over.
 //!
 //! Every format imagoverto writes reads an image without a profile as sRGB,
 //! so an sRGB profile only costs bytes (3,152 for the common IEC61966-2.1
@@ -60,6 +61,81 @@ pub(crate) fn is_srgb(icc: &[u8]) -> bool {
         && [&p.red_trc, &p.green_trc, &p.blue_trc]
             .iter()
             .all(|t| t.as_ref().is_some_and(is_srgb_curve))
+}
+
+/// The colour space an ICC profile's header names (bytes 16–19), whether or
+/// not the rest of it parses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Space {
+    Rgb,
+    Gray,
+    /// CMYK, Lab, XYZ, n-colour, or no readable header.
+    Other,
+}
+
+pub(crate) fn space(icc: &[u8]) -> Space {
+    match icc.get(16..20) {
+        Some(b"RGB ") => Space::Rgb,
+        Some(b"GRAY") => Space::Gray,
+        _ => Space::Other,
+    }
+}
+
+/// What to write for a profile over pixels that are, or are not, gray.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Fit {
+    /// The profile describes the pixels as they are.
+    Keep,
+    /// A gray profile over RGB pixels: this RGB profile means the same.
+    Replace(Vec<u8>),
+    /// No profile can be written that means what this one does.
+    Drop,
+}
+
+/// A profile is written only over pixels in its own colour space: a viewer
+/// may ignore a mismatched one or misrender the image with it.
+pub(crate) fn fit(icc: &[u8], gray_pixels: bool) -> Fit {
+    match (space(icc), gray_pixels) {
+        (Space::Rgb, false) | (Space::Gray, true) => Fit::Keep,
+        (Space::Gray, false) => rgb_from_gray(icc).map_or(Fit::Drop, Fit::Replace),
+        _ => Fit::Drop,
+    }
+}
+
+/// The RGB profile that renders R = G = B as `icc`, a gray matrix/TRC
+/// profile, renders that gray: its tone curve on all three channels, under
+/// sRGB's colorants, which add up to the PCS white as the gray axis does.
+/// `None` for a gray profile with tables, or one that does not parse.
+fn rgb_from_gray(icc: &[u8]) -> Option<Vec<u8>> {
+    let mut p = ColorProfile::new_from_slice(icc).ok()?;
+    if p.color_space != DataColorSpace::Gray || p.pcs != DataColorSpace::Xyz {
+        return None;
+    }
+    let luts = [
+        &p.lut_a_to_b_perceptual,
+        &p.lut_a_to_b_colorimetric,
+        &p.lut_a_to_b_saturation,
+        &p.lut_b_to_a_perceptual,
+        &p.lut_b_to_a_colorimetric,
+        &p.lut_b_to_a_saturation,
+    ];
+    if luts.iter().any(|l| l.is_some()) {
+        return None;
+    }
+    let trc = p.gray_trc.take()?;
+    let srgb = ColorProfile::new_srgb();
+    p.color_space = DataColorSpace::Rgb;
+    // Gray press profiles (Dot Gain 20%) are output profiles; a matrix/TRC
+    // RGB profile has to be a display (or input) one.
+    p.profile_class = moxcms::ProfileClass::DisplayDevice;
+    p.red_colorant = srgb.red_colorant;
+    p.green_colorant = srgb.green_colorant;
+    p.blue_colorant = srgb.blue_colorant;
+    p.red_trc = Some(trc.clone());
+    p.green_trc = Some(trc.clone());
+    p.blue_trc = Some(trc);
+    p.cicp = None;
+    p.encode().ok()
 }
 
 /// Whether decoding every 8-bit value through `curve` and encoding it again
@@ -194,6 +270,71 @@ mod tests {
         assert!(!is_srgb(&gamma));
         assert!(!is_srgb(b"not a profile"));
         assert!(!is_srgb(&[]));
+    }
+
+    /// Each gray value through `gray`, and the same value as R = G = B
+    /// through `rgb`, into sRGB: within one 8-bit step.
+    fn renders_like(gray: &[u8], rgb: &[u8]) {
+        use moxcms::{Layout, TransformOptions};
+        let (gray, rgb) = (
+            ColorProfile::new_from_slice(gray).unwrap(),
+            ColorProfile::new_from_slice(rgb).unwrap(),
+        );
+        let srgb = ColorProfile::new_srgb();
+        let opts = TransformOptions::default();
+        let g = gray
+            .create_transform_8bit(Layout::Gray, &srgb, Layout::Rgb, opts)
+            .unwrap();
+        let r = rgb
+            .create_transform_8bit(Layout::Rgb, &srgb, Layout::Rgb, opts)
+            .unwrap();
+        let src: Vec<u8> = (0..=255).collect();
+        let wide: Vec<u8> = src.iter().flat_map(|&v| [v; 3]).collect();
+        let (mut a, mut b) = (vec![0; 768], vec![0; 768]);
+        g.transform(&src, &mut a).unwrap();
+        r.transform(&wide, &mut b).unwrap();
+        for (i, (x, y)) in a.iter().zip(&b).enumerate() {
+            assert!(x.abs_diff(*y) <= 1, "value {}: {x} vs {y}", i / 3);
+        }
+    }
+
+    #[test]
+    fn profiles_fit_their_pixels() {
+        let rgb = ColorProfile::new_display_p3().encode().unwrap();
+        let gray = ColorProfile::new_gray_with_gamma(2.2).encode().unwrap();
+        assert_eq!(fit(&rgb, false), Fit::Keep);
+        assert_eq!(fit(&gray, true), Fit::Keep);
+        assert_eq!(fit(&rgb, true), Fit::Drop);
+        let Fit::Replace(wide) = fit(&gray, false) else {
+            panic!("a gray profile over RGB pixels is replaced");
+        };
+        assert_eq!(space(&wide), Space::Rgb);
+        renders_like(&gray, &wide);
+        // CMYK, Lab and anything unreadable describe no pixels written.
+        let mut cmyk = rgb.clone();
+        cmyk[16..20].copy_from_slice(b"CMYK");
+        for p in [&cmyk[..], b"not a profile", &[]] {
+            assert_eq!(fit(p, false), Fit::Drop);
+            assert_eq!(fit(p, true), Fit::Drop);
+        }
+    }
+
+    /// The macOS gray profiles, when present: profiles imagoverto did not
+    /// make, with tone curves that are not a plain gamma.
+    #[test]
+    fn system_gray_profiles_widen_to_rgb() {
+        let dir = std::path::Path::new("/System/Library/ColorSync/Profiles");
+        for name in [
+            "Generic Gray Gamma 2.2 Profile.icc",
+            "Generic Gray Profile.icc",
+        ] {
+            if let Ok(gray) = std::fs::read(dir.join(name)) {
+                let Fit::Replace(wide) = fit(&gray, false) else {
+                    panic!("{name}: not replaced");
+                };
+                renders_like(&gray, &wide);
+            }
+        }
     }
 
     /// The macOS system profiles, when present: a check against profiles

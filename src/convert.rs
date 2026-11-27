@@ -4,6 +4,7 @@ use image::DynamicImage;
 
 use crate::decode::{collapse_exact_gray, decode};
 use crate::encode::{self, recompress_jpeg_to_jxl};
+use crate::icc::{self, Fit, Space};
 use crate::{Cancel, Error, Format, Info, inspect};
 
 /// What to convert to.
@@ -147,12 +148,19 @@ pub enum Finding {
     /// The input's ICC profile describes sRGB, which every output format
     /// assumes without one, so it was not written. No colour changes.
     SrgbProfileDropped,
+    /// The input's ICC profile names a colour space the written pixels are
+    /// not in (CMYK, Lab, a gray profile with tables over RGB pixels), and no
+    /// equivalent profile can be made, so it was not written. A
+    /// colour-managed viewer may now show the colours differently.
+    ProfileDropped,
 }
 
 impl Finding {
     pub fn severity(self) -> Severity {
         match self {
-            Finding::LosslessToLossy | Finding::JpegNotKept => Severity::Warning,
+            Finding::LosslessToLossy | Finding::JpegNotKept | Finding::ProfileDropped => {
+                Severity::Warning
+            }
             _ => Severity::Info,
         }
     }
@@ -169,6 +177,7 @@ impl Finding {
             Finding::JpegKept => "IMG-006",
             Finding::JpegNotKept => "IMG-007",
             Finding::SrgbProfileDropped => "IMG-008",
+            Finding::ProfileDropped => "IMG-009",
         }
     }
 
@@ -183,6 +192,7 @@ impl Finding {
             Finding::JpegKept => "convert.jpeg_kept",
             Finding::JpegNotKept => "convert.jpeg_not_kept",
             Finding::SrgbProfileDropped => "convert.srgb_profile_dropped",
+            Finding::ProfileDropped => "convert.profile_dropped",
         }
     }
 
@@ -202,6 +212,9 @@ impl Finding {
             }
             Finding::SrgbProfileDropped => {
                 "the ICC profile is sRGB, the default without one, so it was not written"
+            }
+            Finding::ProfileDropped => {
+                "the ICC profile does not describe the written pixels' colour space, so it was not written"
             }
         }
     }
@@ -287,6 +300,12 @@ pub fn convert(input: &[u8], options: &Options) -> Result<Conversion, Error> {
         decoded.image = collapse_exact_gray(decoded.image);
         findings.push(Finding::SrgbProfileDropped);
     }
+    let gray_profile = decoded.icc.as_deref().map(icc::space) == Some(Space::Gray);
+    // A gray profile describes gray pixels: exactly gray RGB goes out as
+    // gray under it, with the same values.
+    if gray_profile {
+        decoded.image = collapse_exact_gray(decoded.image);
+    }
     let mut img = decoded.image;
 
     if img.color().has_alpha() {
@@ -319,12 +338,35 @@ pub fn convert(input: &[u8], options: &Options) -> Result<Conversion, Error> {
 
     if matches!(quality, Quality::Lossy(_))
         && decoded.near_gray
-        && decoded.icc.is_none()
+        && (decoded.icc.is_none() || gray_profile)
         && img.color().has_color()
     {
         img = DynamicImage::ImageLuma8(img.to_luma8());
         findings.push(Finding::TreatedAsGray);
     }
+
+    // A profile is written only over pixels in its own colour space.
+    let icc = match decoded.icc {
+        Some(p) if icc::space(&p) == Space::Rgb && !img.color().has_color() => {
+            // An RGB profile over gray pixels (a PNG or JPEG may carry one):
+            // widening the pixels changes no value and keeps the profile.
+            img = widen_to_rgb(img);
+            Some(p)
+        }
+        Some(p) => {
+            // WebP stores gray as RGB.
+            let gray_out = !img.color().has_color() && target != Format::WebP;
+            match icc::fit(&p, gray_out) {
+                Fit::Keep => Some(p),
+                Fit::Replace(rgb) => Some(rgb),
+                Fit::Drop => {
+                    findings.push(Finding::ProfileDropped);
+                    None
+                }
+            }
+        }
+        None => None,
+    };
 
     let mode = match quality {
         Quality::Lossless => encode::Mode::Lossless,
@@ -333,7 +375,7 @@ pub fn convert(input: &[u8], options: &Options) -> Result<Conversion, Error> {
     check()?;
     let bytes = encode::encode(
         &img,
-        decoded.icc.as_deref(),
+        icc.as_deref(),
         target,
         mode,
         options.compression,
@@ -464,6 +506,17 @@ fn to_8_bit(img: &DynamicImage) -> DynamicImage {
         image::ColorType::La16 => DynamicImage::ImageLumaA8(img.to_luma_alpha8()),
         image::ColorType::Rgb16 => DynamicImage::ImageRgb8(img.to_rgb8()),
         _ => DynamicImage::ImageRgba8(img.to_rgba8()),
+    }
+}
+
+/// Gray as RGB, the same values in every channel, keeping alpha and depth.
+fn widen_to_rgb(img: DynamicImage) -> DynamicImage {
+    match img {
+        DynamicImage::ImageLuma8(_) => DynamicImage::ImageRgb8(img.to_rgb8()),
+        DynamicImage::ImageLumaA8(_) => DynamicImage::ImageRgba8(img.to_rgba8()),
+        DynamicImage::ImageLuma16(_) => DynamicImage::ImageRgb16(img.to_rgb16()),
+        DynamicImage::ImageLumaA16(_) => DynamicImage::ImageRgba16(img.to_rgba16()),
+        other => other,
     }
 }
 
@@ -737,6 +790,64 @@ mod tests {
         let c = convert(&png_with_icc(&gray, &icc), &Options::new(Format::Png)).unwrap();
         assert!(inspect(&c.bytes).unwrap().gray);
         assert_eq!(pixels(&c.bytes).to_rgb8(), gray.to_rgb8());
+    }
+
+    #[test]
+    fn profiles_fit_the_written_pixels() {
+        let gray_icc = moxcms::ColorProfile::new_gray_with_gamma(2.2)
+            .encode()
+            .unwrap();
+        let gray = DynamicImage::ImageLuma8(testimg::gray_noise(16, 16));
+        let input = png_with_icc(&gray, &gray_icc);
+        // Gray targets keep the gray profile; WebP, which stores RGB, gets
+        // the RGB profile that means the same.
+        for target in [Format::Png, Format::Jxl, Format::WebP] {
+            let c = convert(&input, &Options::new(target)).unwrap();
+            let out = decode(&c.bytes).unwrap();
+            let icc = out.icc.expect("a profile");
+            if target == Format::WebP {
+                assert_eq!(crate::icc::space(&icc), Space::Rgb);
+            } else {
+                assert_eq!(icc, gray_icc, "{target}");
+            }
+            assert_eq!(out.image.to_luma8(), gray.to_luma8(), "{target}");
+            assert!(c.findings.is_empty(), "{target}: {:?}", c.findings);
+        }
+        // Exactly gray RGB under a gray profile goes out as gray.
+        let wide = DynamicImage::ImageRgb8(gray.to_rgb8());
+        let c = convert(&png_with_icc(&wide, &gray_icc), &Options::new(Format::Png)).unwrap();
+        assert!(inspect(&c.bytes).unwrap().gray);
+        assert_eq!(decode(&c.bytes).unwrap().icc, Some(gray_icc));
+
+        // An RGB profile over gray pixels: the pixels widen, the profile stays.
+        let p3 = moxcms::ColorProfile::new_display_p3().encode().unwrap();
+        let c = convert(&png_with_icc(&gray, &p3), &Options::new(Format::Png)).unwrap();
+        let out = decode(&c.bytes).unwrap();
+        assert_eq!(out.icc, Some(p3.clone()));
+        assert_eq!(out.image.to_rgb8(), gray.to_rgb8());
+
+        // A profile for no pixels written (here CMYK) is dropped, and said so.
+        let mut cmyk = p3;
+        cmyk[16..20].copy_from_slice(b"CMYK");
+        for target in [Format::Png, Format::WebP] {
+            let c = convert(&png_with_icc(&rgb(), &cmyk), &Options::new(target)).unwrap();
+            assert!(decode(&c.bytes).unwrap().icc.is_none(), "{target}");
+            assert_eq!(c.findings, [Finding::ProfileDropped], "{target}");
+        }
+    }
+
+    #[test]
+    fn cmyk_jpeg_is_refused() {
+        let cmyk = testimg::jpeg_8x8(4);
+        for target in [Format::WebP, Format::Png, Format::Jxl] {
+            assert!(
+                matches!(
+                    convert(&cmyk, &Options::new(target)),
+                    Err(Error::Unsupported { .. })
+                ),
+                "{target}"
+            );
+        }
     }
 
     #[test]

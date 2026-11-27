@@ -7,6 +7,24 @@ imagoverto is pre-1.0, so breaking changes land as minor-version bumps
 (`0.x.0`), per [Cargo's SemVer compatibility
 rules](https://doc.rust-lang.org/cargo/reference/semver.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **CMYK JPEGs are refused, as documented.** The check never fired for JPEG:
+  `image` 0.25.10 reports a CMYK or YCCK JPEG as RGB, so it was converted to
+  RGB without its profile (the colours shift) and the CMYK profile was
+  written over the RGB pixels (557 KB in one WebP on a 562-book shelf). It is
+  now recognised by its frame header and refused (`Unsupported`).
+- **A profile is written only over pixels in its own colour space.** A gray
+  profile over RGB output (every WebP, which has no gray mode) is replaced by
+  the RGB profile that renders R = G = B as the gray one renders that gray,
+  so a colour-managed viewer shows the same image. Exactly gray RGB under a
+  gray profile now goes out as gray, with the same values. Gray pixels under
+  an RGB profile are widened to RGB. A profile that fits no written pixels is
+  dropped and reported as the new finding `IMG-009`
+  (`convert.profile_dropped`, warning).
+
 ## [0.1.3] - 2026-11-27
 
 ### Changed

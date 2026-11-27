@@ -47,7 +47,14 @@ Rules the code follows:
   refused unless a background is given; the flattening is then reported.
 - **Metadata:** ICC is kept, unless it describes sRGB: every output format
   reads an image without a profile as sRGB, so such a profile is not written
-  and the conversion reports it (`IMG-008`). EXIF orientation is applied to the pixels. Other
+  and the conversion reports it (`IMG-008`). A profile is written only over
+  pixels in its own colour space. A gray profile over RGB output (always so in
+  WebP, which has no gray mode) becomes the RGB profile that renders R = G = B
+  as the gray one renders that gray: its tone curve on all three channels,
+  under sRGB's colorants. Exactly gray RGB under a gray profile goes out as
+  gray. Gray pixels under an RGB profile are widened to RGB. A profile that
+  fits no written pixels (Lab, a gray one with tables, an unreadable header)
+  is dropped and reported (`IMG-009`). EXIF orientation is applied to the pixels. Other
   EXIF and XMP are dropped, except in JPEG to JPEG XL recompression, which keeps
   the file as it was.
 - **Errors are values.** A codec panic is caught and returned as
@@ -163,6 +170,7 @@ to a crate.
 | `IMG-006` | `convert.jpeg_kept` | info | The original JPEG is kept inside the JPEG XL. |
 | `IMG-007` | `convert.jpeg_not_kept` | warning | The original JPEG could not be kept; its decoded pixels were stored losslessly. |
 | `IMG-008` | `convert.srgb_profile_dropped` | info | The ICC profile is sRGB, the default without one, so it was not written. |
+| `IMG-009` | `convert.profile_dropped` | warning | The ICC profile does not describe the written pixels' colour space, so it was not written. |
 | `IMG-100` | `inspect.header` | info | What the header says. |
 | `IMG-101` | `inspect.not_decodable` | error | The image does not decode; the envelope's status is then `problems`. |
 
@@ -273,6 +281,8 @@ zenwebp, rav1d-safe) and `proc-macro-error2` (via zenjxl).
   0.1 s. A started JPEG XL encode runs to its end. The JPEG and PNG encoders and
   the decoders do not check it.
 - CMYK JPEGs, floating-point JPEG XL and HDR are refused (`Unsupported`).
+  A CMYK (or YCCK) JPEG is recognised by its frame header's four components:
+  `image` 0.25.10 reports it as RGB and converts it without the profile.
 - `inspect` reports AVIF `lossless` as unknown.
 
 ## Measurements

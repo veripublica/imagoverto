@@ -49,3 +49,50 @@ pub fn psnr(a: &image::DynamicImage, b: &image::DynamicImage) -> f64 {
     let mse = se / a.as_raw().len() as f64;
     10.0 * (255.0f64 * 255.0 / mse).log10()
 }
+
+/// A hand-built baseline JPEG of 8×8 mid-gray pixels with `components`
+/// components (1, 3 or 4), each 1×1 sampled. No encoder at hand writes four
+/// (CMYK); this does. Every block is a zero DC difference and an EOB, one
+/// 1-bit code each.
+pub fn jpeg_8x8(components: u8) -> Vec<u8> {
+    let n = usize::from(components);
+    let mut j = vec![0xFF, 0xD8];
+    // One quantisation table, all ones.
+    j.extend([0xFF, 0xDB, 0x00, 0x43, 0x00]);
+    j.extend([1; 64]);
+    // SOF0: 8-bit, 8×8.
+    j.extend([
+        0xFF,
+        0xC0,
+        0x00,
+        (8 + 3 * n) as u8,
+        8,
+        0,
+        8,
+        0,
+        8,
+        components,
+    ]);
+    for c in 1..=components {
+        j.extend([c, 0x11, 0]);
+    }
+    // DC and AC table 0, one 1-bit code each, for symbol 0.
+    for class in [0x00, 0x10] {
+        j.extend([0xFF, 0xC4, 0x00, 0x14, class, 1]);
+        j.extend([0; 15]);
+        j.push(0);
+    }
+    j.extend([0xFF, 0xDA, 0x00, (6 + 2 * n) as u8, components]);
+    for c in 1..=components {
+        j.extend([c, 0x00]);
+    }
+    j.extend([0, 63, 0]);
+    // Two bits per block, padded with ones.
+    let bits = 2 * n;
+    j.extend(std::iter::repeat_n(0x00, bits / 8));
+    if bits % 8 != 0 {
+        j.push(0xFF >> (bits % 8));
+    }
+    j.extend([0xFF, 0xD9]);
+    j
+}
