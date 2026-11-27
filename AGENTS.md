@@ -4,7 +4,7 @@
 true at every release. Past changes: `CHANGELOG.md`. API docs:
 <https://docs.rs/imagoverto>.
 
-Figures below name the versions they were measured on. Current version: 0.1.2.
+Figures below name the versions they were measured on. Current version: 0.1.3.
 
 ## Scope
 
@@ -45,7 +45,9 @@ Rules the code follows:
   [Codecs](#codecs)), which has no gray mode.
 - **Alpha is never dropped silently.** Transparent to an alpha-less target is
   refused unless a background is given; the flattening is then reported.
-- **Metadata:** ICC is kept. EXIF orientation is applied to the pixels. Other
+- **Metadata:** ICC is kept, unless it describes sRGB: every output format
+  reads an image without a profile as sRGB, so such a profile is not written
+  and the conversion reports it (`IMG-008`). EXIF orientation is applied to the pixels. Other
   EXIF and XMP are dropped, except in JPEG to JPEG XL recompression, which keeps
   the file as it was.
 - **Errors are values.** A codec panic is caught and returned as
@@ -126,7 +128,7 @@ print no envelope. `inspect` also describes an unreadable image in the envelope.
 ```json
 {
   "tool": "imagoverto",
-  "tool_version": "0.1.2",
+  "tool_version": "0.1.3",
   "convention": "0.7",
   "status": "ok",
   "inputs": [{
@@ -160,6 +162,7 @@ to a crate.
 | `IMG-005` | `convert.near_gray` | info | Near-gray colour (lossy WebP noise) was encoded as gray. |
 | `IMG-006` | `convert.jpeg_kept` | info | The original JPEG is kept inside the JPEG XL. |
 | `IMG-007` | `convert.jpeg_not_kept` | warning | The original JPEG could not be kept; its decoded pixels were stored losslessly. |
+| `IMG-008` | `convert.srgb_profile_dropped` | info | The ICC profile is sRGB, the default without one, so it was not written. |
 | `IMG-100` | `inspect.header` | info | What the header says. |
 | `IMG-101` | `inspect.not_decodable` | error | The image does not decode; the envelope's status is then `problems`. |
 

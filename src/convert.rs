@@ -2,7 +2,7 @@
 
 use image::DynamicImage;
 
-use crate::decode::decode;
+use crate::decode::{collapse_exact_gray, decode};
 use crate::encode::{self, recompress_jpeg_to_jxl};
 use crate::{Cancel, Error, Format, Info, inspect};
 
@@ -144,6 +144,9 @@ pub enum Finding {
     /// JPEG → JPEG XL could not keep the original JPEG, so its decoded pixels
     /// were stored losslessly instead.
     JpegNotKept,
+    /// The input's ICC profile describes sRGB, which every output format
+    /// assumes without one, so it was not written. No colour changes.
+    SrgbProfileDropped,
 }
 
 impl Finding {
@@ -165,6 +168,7 @@ impl Finding {
             Finding::TreatedAsGray => "IMG-005",
             Finding::JpegKept => "IMG-006",
             Finding::JpegNotKept => "IMG-007",
+            Finding::SrgbProfileDropped => "IMG-008",
         }
     }
 
@@ -178,6 +182,7 @@ impl Finding {
             Finding::TreatedAsGray => "convert.near_gray",
             Finding::JpegKept => "convert.jpeg_kept",
             Finding::JpegNotKept => "convert.jpeg_not_kept",
+            Finding::SrgbProfileDropped => "convert.srgb_profile_dropped",
         }
     }
 
@@ -194,6 +199,9 @@ impl Finding {
             }
             Finding::JpegNotKept => {
                 "the original JPEG could not be kept; its decoded pixels were stored losslessly"
+            }
+            Finding::SrgbProfileDropped => {
+                "the ICC profile is sRGB, the default without one, so it was not written"
             }
         }
     }
@@ -270,8 +278,15 @@ pub fn convert(input: &[u8], options: &Options) -> Result<Conversion, Error> {
         }
     }
 
-    let decoded = decode(input)?;
+    let mut decoded = decode(input)?;
     check()?;
+    // An sRGB profile says what a file without one already means. Without
+    // it, an exactly gray image can also go out as gray.
+    if decoded.icc.as_deref().is_some_and(crate::icc::is_srgb) {
+        decoded.icc = None;
+        decoded.image = collapse_exact_gray(decoded.image);
+        findings.push(Finding::SrgbProfileDropped);
+    }
     let mut img = decoded.image;
 
     if img.color().has_alpha() {
@@ -664,17 +679,64 @@ mod tests {
         assert_eq!(pixels(&lossless.bytes), pixels(&webp.bytes));
     }
 
-    #[test]
-    fn icc_profile_travels() {
-        let icc = moxcms::ColorProfile::new_srgb().encode().unwrap();
+    fn png_with_icc(img: &DynamicImage, icc: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
         let mut enc = image::codecs::png::PngEncoder::new(Cursor::new(&mut out));
-        image::ImageEncoder::set_icc_profile(&mut enc, icc.clone()).unwrap();
-        rgb().write_with_encoder(enc).unwrap();
+        image::ImageEncoder::set_icc_profile(&mut enc, icc.to_vec()).unwrap();
+        img.write_with_encoder(enc).unwrap();
+        out
+    }
+
+    #[test]
+    fn icc_profile_travels() {
+        let icc = moxcms::ColorProfile::new_display_p3().encode().unwrap();
+        let input = png_with_icc(&rgb(), &icc);
         for target in [Format::Png, Format::WebP, Format::Jxl] {
-            let c = convert(&out, &Options::new(target)).unwrap();
+            let c = convert(&input, &Options::new(target)).unwrap();
             assert_eq!(decode(&c.bytes).unwrap().icc, Some(icc.clone()), "{target}");
+            assert!(!c.findings.contains(&Finding::SrgbProfileDropped));
         }
+        let c = convert(&input, &Options::new(Format::Jpeg).with_quality(80)).unwrap();
+        assert_eq!(decode(&c.bytes).unwrap().icc, Some(icc));
+    }
+
+    #[test]
+    fn srgb_profile_is_not_written() {
+        let icc = moxcms::ColorProfile::new_srgb().encode().unwrap();
+        let input = png_with_icc(&rgb(), &icc);
+        for (target, quality) in [
+            (Format::Png, None),
+            (Format::WebP, None),
+            (Format::Jxl, None),
+            (Format::WebP, Some(80)),
+            (Format::Jpeg, Some(80)),
+        ] {
+            let mut o = Options::new(target);
+            o.quality = quality;
+            let c = convert(&input, &o).unwrap();
+            // JPEG XL then signals sRGB in its own header, from which the
+            // decoder synthesises a profile; the 3 KB one is not stored.
+            match decode(&c.bytes).unwrap().icc {
+                None => {}
+                Some(out) if target == Format::Jxl => {
+                    assert!(crate::icc::is_srgb(&out));
+                    assert!(out.len() < icc.len());
+                }
+                Some(_) => panic!("{target}: a profile was written"),
+            }
+            assert!(
+                c.findings.contains(&Finding::SrgbProfileDropped),
+                "{target}"
+            );
+            if quality.is_none() {
+                assert_eq!(pixels(&c.bytes), pixels(&input), "{target}");
+            }
+        }
+        // Without the profile, an exactly gray image goes out as gray.
+        let gray = DynamicImage::ImageRgb8(DynamicImage::ImageLuma8(rgb().to_luma8()).to_rgb8());
+        let c = convert(&png_with_icc(&gray, &icc), &Options::new(Format::Png)).unwrap();
+        assert!(inspect(&c.bytes).unwrap().gray);
+        assert_eq!(pixels(&c.bytes).to_rgb8(), gray.to_rgb8());
     }
 
     #[test]

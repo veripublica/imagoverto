@@ -250,7 +250,7 @@ fn unsupported_layout(what: String) -> Error {
 /// An RGB(A) image whose every pixel has R = G = B, as gray. Exact, so no
 /// value changes: the encoder that follows just stops spending bits on
 /// empty colour channels.
-fn collapse_exact_gray(img: DynamicImage) -> DynamicImage {
+pub(crate) fn collapse_exact_gray(img: DynamicImage) -> DynamicImage {
     fn gray<P: Copy + PartialEq>(px: &[P], channels: usize) -> bool {
         px.chunks_exact(channels)
             .all(|p| p[0] == p[1] && p[1] == p[2])

@@ -16,6 +16,7 @@ mod decode;
 mod encode;
 mod error;
 mod format;
+mod icc;
 mod inspect;
 mod jpeg_quality;
 mod limits;

@@ -7,6 +7,30 @@ imagoverto is pre-1.0, so breaking changes land as minor-version bumps
 (`0.x.0`), per [Cargo's SemVer compatibility
 rules](https://doc.rust-lang.org/cargo/reference/semver.html).
 
+## [0.1.3] - 2026-11-27
+
+### Changed
+
+- **An sRGB ICC profile is no longer written.** Every output format reads an
+  image without a profile as sRGB, so the profile only cost bytes (3,144 for
+  the common IEC61966-2.1 one; on a 562-book shelf, 2.46 MB over 638 WebPs).
+  A profile counts as sRGB when it is a plain RGB matrix/TRC profile with
+  sRGB's colorants and a tone curve that gives back sRGB's value for every
+  8-bit input; any other profile (Adobe RGB, Display P3, gamma 2.2, gray,
+  CMYK, LUT-based) is kept as before. This includes the profile a JPEG XL
+  decoder synthesises for an sRGB JPEG XL, which was written into every
+  conversion from JPEG XL until now. The conversion reports it as the new
+  finding `IMG-008` (`convert.srgb_profile_dropped`, info). JPEG → JPEG XL
+  recompression keeps the original JPEG as before.
+- **Gray with an sRGB profile goes out as gray.** An RGB image whose pixels
+  are exactly gray was kept as RGB when it carried a profile; with an sRGB
+  profile it is now stored as gray, with the same pixel values. A lossy WebP
+  whose colour is codec noise around gray is now treated as gray (`IMG-005`)
+  under an sRGB profile too.
+- **Manifest:** `homepage` dropped from `imagoverto`'s `Cargo.toml`, where it
+  equalled `repository`. crates.io shows the repository link either way.
+  `imagoverto-wasm` keeps it for npm.
+
 ## [0.1.2] - 2026-11-23
 
 A maintenance release: no change to conversion, options or output.
