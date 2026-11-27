@@ -7,7 +7,7 @@ imagoverto is pre-1.0, so breaking changes land as minor-version bumps
 (`0.x.0`), per [Cargo's SemVer compatibility
 rules](https://doc.rust-lang.org/cargo/reference/semver.html).
 
-## [Unreleased]
+## [0.1.4] - 2026-11-28
 
 ### Fixed
 

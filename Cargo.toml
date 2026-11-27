@@ -1,6 +1,6 @@
 [package]
 name = "imagoverto"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 # The floor of the imazen codecs (zenwebp, zenjxl, zenravif, zenavif-parse).
 rust-version = "1.95"

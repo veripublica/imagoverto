@@ -1,6 +1,6 @@
 [package]
 name = "imagoverto-wasm"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 rust-version = "1.95"
 description = "WebAssembly bindings for imagoverto: convert still images to WebP, JPEG XL, JPEG and PNG in the browser, no upload."
